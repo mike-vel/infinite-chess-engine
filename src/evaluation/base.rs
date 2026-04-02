@@ -612,6 +612,10 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
     const MINOR_THREATENS_ROOK: i32 = 20;
     const MINOR_THREATENS_QUEEN: i32 = 35;
 
+    // Hanging piece tracking
+    let mut w_hanging_penalty = 0;
+    let mut b_hanging_penalty = 0;
+
     const KNIGHT_OFFSETS: [(i64, i64); 8] = [
         (2, 1),
         (2, -1),
@@ -1245,6 +1249,73 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
                             }
                         }
 
+                        // --- Hanging Piece Detection (Fast: pawn attacks + minor threats only) ---
+                        // Check each piece in piece_list for hanging status
+                        for &(px, py, piece) in piece_list.iter() {
+                            let pt = piece.piece_type();
+                            let is_white = piece.color() == PlayerColor::White;
+
+                            // Skip royals and pawns
+                            if pt.is_royal() || pt == PieceType::Pawn {
+                                continue;
+                            }
+
+                            let piece_value = get_piece_value_base(pt);
+                            const HANGING_PENALTY_CAP: i32 = 50;
+                            const HANGING_DIVISOR: i32 = 8;
+                            let base_penalty = (piece_value / HANGING_DIVISOR).min(HANGING_PENALTY_CAP);
+
+                            if is_white {
+                                // Check if white piece is attacked by black pawns
+                                let mut attacked_by_pawn = false;
+                                let mut defended_by_pawn = false;
+
+                                // Black pawns attack downward (decreasing y)
+                                for dx in [-1i64, 1] {
+                                    if let Some(target) = game.board.get_piece(px + dx, py + 1) {
+                                        if target.piece_type() == PieceType::Pawn && target.color() == PlayerColor::Black {
+                                            attacked_by_pawn = true;
+                                        }
+                                    }
+                                    // White pawns defend from below (increasing y)
+                                    if let Some(target) = game.board.get_piece(px + dx, py - 1) {
+                                        if target.piece_type() == PieceType::Pawn && target.color() == PlayerColor::White {
+                                            defended_by_pawn = true;
+                                        }
+                                    }
+                                }
+
+                                // If attacked by pawn but not defended, apply penalty
+                                if attacked_by_pawn && !defended_by_pawn {
+                                    w_hanging_penalty += base_penalty;
+                                }
+                            } else {
+                                // Check if black piece is attacked by white pawns
+                                let mut attacked_by_pawn = false;
+                                let mut defended_by_pawn = false;
+
+                                // White pawns attack upward (increasing y)
+                                for dx in [-1i64, 1] {
+                                    if let Some(target) = game.board.get_piece(px + dx, py - 1) {
+                                        if target.piece_type() == PieceType::Pawn && target.color() == PlayerColor::White {
+                                            attacked_by_pawn = true;
+                                        }
+                                    }
+                                    // Black pawns defend from above (decreasing y)
+                                    if let Some(target) = game.board.get_piece(px + dx, py + 1) {
+                                        if target.piece_type() == PieceType::Pawn && target.color() == PlayerColor::Black {
+                                            defended_by_pawn = true;
+                                        }
+                                    }
+                                }
+
+                                // If attacked by pawn but not defended, apply penalty
+                                if attacked_by_pawn && !defended_by_pawn {
+                                    b_hanging_penalty += base_penalty;
+                                }
+                            }
+                        }
+
                         // --- Post-Pass processing ---
                         let final_phase = phase.min(MAX_PHASE);
                         let cloud_center = if cloud_count > 0 {
@@ -1359,6 +1430,10 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
                         tracer.record("Threats: Minor", w_minor_threats, b_minor_threats);
                         score += (w_pawn_threats + w_minor_threats)
                             - (b_pawn_threats + b_minor_threats);
+
+                        // Hanging Pieces (Fast detection: pawn attacks only)
+                        tracer.record("Hanging Pieces", w_hanging_penalty, b_hanging_penalty);
+                        score += b_hanging_penalty - w_hanging_penalty;
 
                         // Global Tropism
                         let gt_att_mult = taper(180, 360);
