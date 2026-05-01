@@ -2,6 +2,8 @@ use crate::board::{PieceType, PlayerColor};
 use crate::evaluation::base;
 use crate::game::GameState;
 
+const OUTSIDE_PASSED_PAWN_BONUS: [i32; 7] = [240, 140, 75, 40, 20, 10, 0]; // Increases as the promotion gets closer
+
 #[inline]
 pub fn evaluate(game: &GameState) -> i32 {
     evaluate_inner(game)
@@ -185,9 +187,11 @@ fn eval_pawn(x: i64, y: i64, color: PlayerColor, game: &GameState) -> i32 {
     if x < 1 {
         // LEFT OUTSIDE: 100 + 20 per file out
         b += 100 + ((1 - x) as i32 * 20);
+        b += OUTSIDE_PASSED_PAWN_BONUS[(dist as usize).min(6)]; // Bonus for being outside and close to promotion
     } else if x > 8 {
         // RIGHT OUTSIDE: 100 + 20 per file out
         b += 100 + ((x - 8) as i32 * 20);
+        b += OUTSIDE_PASSED_PAWN_BONUS[(dist as usize).min(6)]; // Bonus for being outside and close to promotion
     } else if x == 1 || x == 8 {
         // EDGE FILES: Strong priority
         b += 75;
