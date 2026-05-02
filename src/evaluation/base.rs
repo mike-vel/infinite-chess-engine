@@ -729,12 +729,10 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
 
                             // Apply defender bonus if there are a lot of defenders at a distance
                             if w_defender_units_to_add >= 200 {
-                                w_defender_bonus = 200 * d;
-                                w_defender_bonus = w_defender_bonus.min(0).max(300 + 300 * d - 100 * b_total_sliders - w_defender_bonus);
+                                w_defender_bonus = (300 + 100 * d - 100 * b_total_sliders).max(0);
                             }
                             if b_defender_units_to_add >= 200 {
-                                b_defender_bonus = 200 * d;
-                                b_defender_bonus = b_defender_bonus.min(0).max(300 + 300 * d - 100 * w_total_sliders - b_defender_bonus);
+                                b_defender_bonus = (300 + 100 * d - 100 * w_total_sliders).max(0);
                             }
                         }
                         w_defender_units += w_defender_bonus;
