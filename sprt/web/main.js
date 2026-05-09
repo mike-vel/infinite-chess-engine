@@ -3,7 +3,7 @@ const EngineOld = wasmOld.Engine;
 import initNew, * as wasmNew from './pkg-new/hydrochess_wasm.js';
 const EngineNew = wasmNew.Engine;
 const initThreadPoolNew = wasmNew.initThreadPool;
-import { getVariantData, getAllVariants, generateSetupICN, engineLetterToICNCode, getVariantsWithCustomEval } from './variants.js';
+import { getVariantData, getAllVariants, generateSetupICN, engineLetterToICNCode, getVariantsWithCustomEval, getVariantsWithDefaultDisabled } from './variants.js';
 
 let isNewEngineMT = false;
 
@@ -55,6 +55,7 @@ const sprtMaxMoves = document.getElementById('sprtMaxMoves');
 const sprtMaterialThresholdEl = document.getElementById('sprtMaterialAdjudication');
 const sprtSearchNoiseEl = document.getElementById('sprtSearchNoise');
 const sprtVariantsEl = document.getElementById('sprtVariants');
+const resetToDefaultBtn = document.getElementById('resetToDefault');
 const runSprtBtn = document.getElementById('runSprt');
 const stopSprtBtn = document.getElementById('stopSprt');
 const sprtWinsEl = document.getElementById('sprtWins');
@@ -168,9 +169,8 @@ function populateVariantDropdown() {
     // Get variants with custom eval (these will be disabled by default for SPRT stability)
     const customEvalVariants = new Set(getVariantsWithCustomEval());
 
-    // Variants to disable by default: custom evals AND Abundance
-    const defaultsDisabled = new Set(customEvalVariants);
-    defaultsDisabled.add('Abundance');
+    // Variants to disable by default
+    const defaultsDisabled = customEvalVariants.union(new Set(getVariantsWithDefaultDisabled()));
 
     sprtVariantsEl.innerHTML = '';
     availableVariants.forEach(variant => {
@@ -429,6 +429,10 @@ function generateICNFromWorkerLog(workerLog, gameIndex, result, newPlaysWhite, e
             termination = 'Loss on engine failure (no move returned)';
         } else if (endReason === 'horde_elimination') {
             termination = `Win by capturing all White pieces in ${displayVariantName}`;
+        } else if (endReason === 'allroyalscaptured') {
+            termination = 'All royals captured';
+        } else if (endReason === 'royalcapture') {
+            termination = 'Royal capture';
         } else if (endReason === 'checkmate') {
             termination = 'Checkmate';
         } else if (endReason === 'stalemate') {
@@ -1319,6 +1323,7 @@ function downloadGamesJson() {
     log('Downloaded ' + games.length + ' games as JSON', 'success');
 }
 
+resetToDefaultBtn.addEventListener('click', populateVariantDropdown);
 runSprtBtn.addEventListener('click', runSprt);
 stopSprtBtn.addEventListener('click', stopSprt);
 copyLogBtn.addEventListener('click', copyLog);

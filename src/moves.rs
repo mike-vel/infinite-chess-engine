@@ -113,9 +113,6 @@ fn generate_knightrider_moves(board: &Board, from: &Coordinate, piece: &Piece) -
             let idx = bits.trailing_zeros() as usize;
             bits &= bits - 1;
             let packed = tile.piece[idx];
-            if packed == 0 {
-                continue;
-            }
             let p = Piece::from_packed(packed);
             let lx = (idx % 8) as i64;
             let ly = (idx / 8) as i64;
@@ -248,8 +245,8 @@ pub fn is_path_clear_locally(
 
     while cur_x != to.x || cur_y != to.y {
         let idx = local_index(cur_x, cur_y);
-        // Direct array access - O(1)
-        if tile.piece[idx] != 0 {
+        let bit = 1u64 << idx;
+        if (tile.occ_all & bit) != 0 {
             return Some(false);
         }
         cur_x += step_x;
@@ -3536,7 +3533,7 @@ mod tests {
         let _guard = get_bounds_lock().lock().unwrap_or_else(|e| e.into_inner());
         f()
     }
-
+    
     // ======================== Bounds Tests ========================
 
     #[test]
