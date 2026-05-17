@@ -3352,6 +3352,22 @@ mod tests {
 
     use crate::game::GameState;
 
+    /// Only for debugging purposes, excluded during tests or releases
+    #[test]
+    #[ignore]
+    fn test_evaluate_traced() {
+        let mut game = GameState::new();
+        let icn = "b 1/100 1 (8|1) p6,7+|P5,2+|p4,4|p8,6|P8,5|p3,5|P4,3|P1,5|k3,6|p6,5|K5,1";
+        game.setup_position_from_icn(icn);
+
+        let traced_evaluation = debug_evaluate(&game);
+
+        println!("Traced evaluation breakdown:");
+        for (key, w_score, b_score) in traced_evaluation.rows {
+            println!("{} | White: {}, Black: {}", key, w_score, b_score);
+        }
+    }
+
     #[test]
     fn test_is_between() {
         assert!(is_between(5, 3, 7));
