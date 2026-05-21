@@ -334,6 +334,7 @@ const KING_DEFENDER_VALUE_THRESHOLD: i32 = 400; // Pieces below this value are d
 // ==================== Game Phase ====================
 
 pub const MAX_PHASE: i32 = 24;
+pub const MAX_KING_PHASE: i32 = 12;
 
 pub fn get_piece_phase(piece_type: PieceType) -> i32 {
     match piece_type {
@@ -365,6 +366,27 @@ pub fn get_piece_phase(piece_type: PieceType) -> i32 {
         PieceType::RoyalCentaur => 2,
 
         _ => 0,
+    }
+}
+pub fn get_king_activation_phase(piece_type: PieceType) -> i32 {
+    match piece_type {
+        PieceType::Pawn => 0,
+        PieceType::Knight => 1,
+        PieceType::Bishop => 2,
+        PieceType::Rook => 2,
+        PieceType::Queen => 6,
+        PieceType::King => 0,
+
+        // Fairy pieces
+        PieceType::Guard => 1,
+        PieceType::Centaur => 2, // Knight-like
+        PieceType::Huygen => 2,
+
+        // Strong Compounds
+        PieceType::Chancellor => 7, // R+N
+        PieceType::Archbishop => 6, // B+N
+        PieceType::Hawk => 9,
+        _ => MAX_KING_PHASE,
     }
 }
 
@@ -464,7 +486,9 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
     };
 
     // Single-Pass Collection and Scoring
-    let mut phase = 0;
+    let mut phase = 0; // For tapering between middlegame and endgame, Decreases with fewer pieces
+    let mut king_phase = MAX_KING_PHASE; // For king activation during the endgame, Increases with fewer pieces
+
     let mut white_undeveloped = 0;
     let mut black_undeveloped = 0;
     let mut white_bishops = 0;
@@ -530,22 +554,16 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
     let mut b_attacking_tropism: i32 = 0;
     let mut b_defensive_tropism: i32 = 0;
 
-    let mut white_royal_tropisms: SmallVec<[_; 1]> = game.white_royals.iter().map(|r| RoyalTropismMetrics {
-        tropism_addend: 0, // placeholder
-        attacking_units: 0, // placeholder
-        defender_units: 0, // placeholder
-        defender_units_in_distance: [0; 8],
-        x: r.x,
-        y: r.y,
-    }).collect();
-    let mut black_royal_tropisms: SmallVec<[_; 1]> = game.black_royals.iter().map(|r| RoyalTropismMetrics {
-        tropism_addend: 0, // placeholder
-        attacking_units: 0, // placeholder
-        defender_units: 0, // placeholder
-        defender_units_in_distance: [0; 8],
-        x: r.x,
-        y: r.y,
-    }).collect();
+    let mut white_royal_tropisms: SmallVec<[_; 1]> = game.white_royals.iter().map(|r| RoyalTropismMetrics::new(
+        game.board.get_piece(r.x, r.y).map(|p| p.piece_type()).unwrap_or(PieceType::Void),
+        r.x,
+        r.y,
+    )).collect();
+    let mut black_royal_tropisms: SmallVec<[_; 1]> = game.black_royals.iter().map(|r| RoyalTropismMetrics::new(
+        game.board.get_piece(r.x, r.y).map(|p| p.piece_type()).unwrap_or(PieceType::Void),
+        r.x,
+        r.y,
+    )).collect();
 
     // Interaction threat constants
     const PAWN_THREATENS_MINOR: i32 = 25;
@@ -782,7 +800,8 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
                                 let y = cy * 8 + (idx / 8) as i64;
 
                                 // 1. Phase
-                                phase += get_piece_phase(pt);
+                                phase += get_piece_phase(pt); // Decreases as pieces get fewer
+                                king_phase -= get_king_activation_phase(pt); // Increases as pieces get fewer
 
                                 // 2. Piece Collection (Optimized categorization)
                                 if pt == PieceType::Pawn {
@@ -1321,6 +1340,7 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
 
                         // --- Post-Pass processing ---
                         let final_phase = phase.min(MAX_PHASE);
+                        king_phase = king_phase.max(0);
                         let cloud_center = if cloud_count > 0 {
                             Some(Coordinate {
                                 x: ref_x + cloud_sum_dx / cloud_count,
@@ -1433,6 +1453,18 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
                             white_rq,
                             black_rq,
                         );
+
+                        if king_phase > 0 {
+                            score += evaluate_king_positioning_traced(
+                                game,
+                                king_phase,
+                                white_royal_tropisms.as_ref(),
+                                black_royal_tropisms.as_ref(),
+                                tracer,
+                                white_pawns,
+                                black_pawns,
+                            );
+                        }
 
                         // Interaction Threats (Result from merged loop)
                         tracer.record("Threats: Pawn", w_pawn_threats, b_pawn_threats);
@@ -1813,13 +1845,31 @@ fn evaluate_pieces_processed<T: EvaluationTracer>(
     (w_activity + w_pair_bonus) - (b_activity + b_pair_bonus)
 }
 
-struct RoyalTropismMetrics {
+pub struct RoyalTropismMetrics {
+    piece_type: PieceType,
     tropism_addend: i32,
     attacking_units: i32,
     defender_units: i32,
     defender_units_in_distance: [i32; 8],
+    nearest_pawn: Option<Coordinate>,
     x: i64,
     y: i64,
+}
+impl RoyalTropismMetrics {
+    fn new(piece_type: PieceType, x: i64, y: i64) -> Self {
+        Self {
+            piece_type,
+            x,
+            y,
+
+            // Placeholders (filled in during processing)
+            tropism_addend: 0,
+            attacking_units: 0,
+            defender_units: 0,
+            defender_units_in_distance: [0; 8],
+            nearest_pawn: None,
+        }
+    }
 }
 
 /// Calculates the right distance to attack the other side and defend your own king.
@@ -3101,6 +3151,7 @@ fn compute_pawn_structure_traced<T: EvaluationTracer>(
             }
         }
 
+        // Connectivity
         if black_pawns.binary_search(&(bx - 1, by + 1)).is_ok()
             || black_pawns.binary_search(&(bx + 1, by + 1)).is_ok()
         {
@@ -3302,6 +3353,80 @@ pub fn is_clear_line_between_fast(
     }
 
     true
+}
+
+pub fn evaluate_king_positioning_traced<T: EvaluationTracer>(
+    game: &GameState,
+    king_phase: i32,
+    white_royals: &[RoyalTropismMetrics],
+    black_royals: &[RoyalTropismMetrics],
+    tracer: &mut T,
+    white_pawns: &[(i64, i64)],
+    black_pawns: &[(i64, i64)],
+) -> i32 {
+    let mut w_activity = 0;
+    let mut b_activity = 0;
+
+    // Kings should be near the pawns during the endgame
+    for &(wx, wy) in white_pawns {
+        let w_promo = game.white_promo_rank;
+        let dist_to_promo = (w_promo - wy).max(1);
+        let rel_rank = (6 - dist_to_promo).clamp(0, 5) as usize;
+        let mut min_d = 255; // arbitrarily large number
+
+        for wk in white_royals {
+            if matches!(wk.piece_type, PieceType::King) {
+                let d = (wx - wk.x).abs().max((wy - wk.y).abs()) as i32;
+                min_d = min_d.min(d);
+            }
+        }
+        let near_friendly_king_bonus = PASSED_FRIENDLY_KING_DIST[rel_rank] * (7 - min_d.min(7));
+        let far_friendly_king_bonus = -(3 * min_d - 22).min(0);
+
+        min_d = 1000; // reset it back
+        for bk in black_royals {
+            if matches!(bk.piece_type, PieceType::King) {
+                let d = (wx - bk.x).abs().max((wy - bk.y).abs()) as i32;
+                min_d = min_d.min(d);
+            }
+        }
+        let near_enemy_king_penalty = PASSED_ENEMY_KING_DIST[rel_rank] * (7 - min_d.min(7));
+        let far_enemy_king_penalty = -(3 * min_d - 22).min(0);
+
+        w_activity += (near_friendly_king_bonus - near_enemy_king_penalty + (far_friendly_king_bonus - far_enemy_king_penalty).clamp(-90, 90))
+            * king_phase / MAX_KING_PHASE;
+    }
+    for &(bx, by) in black_pawns {
+        let b_promo = game.black_promo_rank;
+        let dist_to_promo = (by - b_promo).max(1);
+        let rel_rank = (6 - dist_to_promo).clamp(0, 5) as usize;
+        let mut min_d = 255; // arbitrarily large number
+
+        for bk in black_royals {
+            if matches!(bk.piece_type, PieceType::King) {
+                let d = (bx - bk.x).abs().max((by - bk.y).abs()) as i32;
+                min_d = min_d.min(d);
+            }
+        }
+        let near_friendly_king_bonus = PASSED_FRIENDLY_KING_DIST[rel_rank] * (7 - min_d.min(7));
+        let far_friendly_king_bonus = -(3 * min_d - 22).min(0);
+
+        min_d = 1000; // reset it back
+        for wk in white_royals {
+            if matches!(wk.piece_type, PieceType::King) {
+                let d = (bx - wk.x).abs().max((by - wk.y).abs()) as i32;
+                min_d = min_d.min(d);
+            }
+        }
+        let near_enemy_king_penalty = PASSED_ENEMY_KING_DIST[rel_rank] * (7 - min_d.min(7));
+        let far_enemy_king_penalty = -(3 * min_d - 22).min(0);
+
+        b_activity += (near_friendly_king_bonus - near_enemy_king_penalty + (far_friendly_king_bonus - far_enemy_king_penalty).clamp(-90, 90))
+            * king_phase / MAX_KING_PHASE;
+    }
+
+    tracer.record("Pawn: King Proximity", w_activity, b_activity);
+    w_activity - b_activity
 }
 
 pub fn calculate_initial_material(board: &Board) -> i32 {
