@@ -357,6 +357,84 @@ impl GameState {
     pub fn has_special_right(&self, coord: &Coordinate) -> bool {
         self.special_rights.contains(coord)
     }
+
+    #[inline]
+    fn is_castling_partner_piece(piece: Piece) -> bool {
+        piece.piece_type() != PieceType::Pawn && !piece.piece_type().is_royal()
+    }
+
+    #[inline]
+    fn castling_bit_index(color: PlayerColor, royal_x: i64, partner_x: i64) -> Option<usize> {
+        match color {
+            PlayerColor::White => Some(if partner_x > royal_x { 0 } else { 1 }),
+            PlayerColor::Black => Some(if partner_x > royal_x { 2 } else { 3 }),
+            PlayerColor::Neutral => None,
+        }
+    }
+
+    fn recompute_castling_state(&mut self) {
+        self.castling_partner_counts = [0; 4];
+        self.effective_castling_rights = 0;
+
+        for royal in self.white_royals.iter().chain(self.black_royals.iter()) {
+            if !self.special_rights.contains(royal) {
+                continue;
+            }
+            let Some(royal_piece) = self.board.get_piece(royal.x, royal.y) else {
+                continue;
+            };
+            if !royal_piece.piece_type().is_royal() {
+                continue;
+            }
+
+            for coord in &self.special_rights {
+                if coord.y != royal.y || coord.x == royal.x {
+                    continue;
+                }
+                let Some(partner) = self.board.get_piece(coord.x, coord.y) else {
+                    continue;
+                };
+                if partner.color() != royal_piece.color()
+                    || !Self::is_castling_partner_piece(partner)
+                {
+                    continue;
+                }
+                if let Some(idx) = Self::castling_bit_index(royal_piece.color(), royal.x, coord.x) {
+                    self.castling_partner_counts[idx] =
+                        self.castling_partner_counts[idx].saturating_add(1);
+                    self.effective_castling_rights |= 1 << idx;
+                }
+            }
+        }
+    }
+
+    fn needs_precise_castling_rights_hash(&self) -> bool {
+        self.castling_partner_counts.iter().any(|&count| count > 1)
+    }
+
+    #[inline]
+    fn castling_hash_pair(&self) -> (u64, u64) {
+        use crate::search::zobrist::{
+            castling_rights_key_from_bitfield, castling_special_right_key,
+            rep_castling_rights_key_from_bitfield, rep_castling_special_right_key,
+        };
+
+        let mut h = castling_rights_key_from_bitfield(self.effective_castling_rights);
+        let mut rh = rep_castling_rights_key_from_bitfield(self.effective_castling_rights);
+
+        if self.needs_precise_castling_rights_hash() {
+            for coord in &self.special_rights {
+                if let Some(piece) = self.board.get_piece(coord.x, coord.y)
+                    && piece.piece_type() != PieceType::Pawn
+                {
+                    h ^= castling_special_right_key(coord.x, coord.y);
+                    rh ^= rep_castling_special_right_key(coord.x, coord.y);
+                }
+            }
+        }
+
+        (h, rh)
+    }
 }
 
 impl Default for GameState {
@@ -582,69 +660,9 @@ impl GameState {
         self.white_non_pawn_material = white_npm;
         self.black_non_pawn_material = black_npm;
 
-        // Reset and recompute initial effective castling rights and partner counts
-        self.castling_partner_counts = [0; 4];
-        self.effective_castling_rights = 0;
-
-        // Find white castling partners with rights
-        if let Some(wk_pos) = self.white_royals.first() {
-            let wk_has_rights = self.special_rights.contains(wk_pos);
-            for coord in &self.special_rights {
-                if coord.y != wk_pos.y || coord.x == wk_pos.x {
-                    continue;
-                }
-                if let Some(piece) = self.board.get_piece(coord.x, coord.y)
-                    && piece.color() == PlayerColor::White
-                    && piece.piece_type() != PieceType::Pawn
-                    && !piece.piece_type().is_royal()
-                {
-                    if coord.x > wk_pos.x {
-                        self.castling_partner_counts[0] += 1;
-                    } else {
-                        self.castling_partner_counts[1] += 1;
-                    }
-                }
-            }
-            if wk_has_rights {
-                if self.castling_partner_counts[0] > 0 {
-                    self.effective_castling_rights |= 1;
-                }
-                if self.castling_partner_counts[1] > 0 {
-                    self.effective_castling_rights |= 2;
-                }
-            }
-        }
-
-        // Find black castling partners with rights
-        if let Some(bk_pos) = self.black_royals.first() {
-            let bk_has_rights = self.special_rights.contains(bk_pos);
-            for coord in &self.special_rights {
-                if coord.y != bk_pos.y || coord.x == bk_pos.x {
-                    continue;
-                }
-                if let Some(piece) = self.board.get_piece(coord.x, coord.y)
-                    && piece.color() == PlayerColor::Black
-                    && piece.piece_type() != PieceType::Pawn
-                    && !piece.piece_type().is_royal()
-                {
-                    if coord.x > bk_pos.x {
-                        self.castling_partner_counts[2] += 1;
-                    } else {
-                        self.castling_partner_counts[3] += 1;
-                    }
-                }
-            }
-            if bk_has_rights {
-                if self.castling_partner_counts[2] > 0 {
-                    self.effective_castling_rights |= 4;
-                }
-                if self.castling_partner_counts[3] > 0 {
-                    self.effective_castling_rights |= 8;
-                }
-            }
-        }
         // Rebuild spatial indices from current board
         self.spatial_indices = SpatialIndices::new(&self.board);
+        self.recompute_castling_state();
         // Recompute check squares for O(1) check detection
         self.recompute_check_squares();
         // Recompute correction hashes for eval adjustment
@@ -1573,8 +1591,7 @@ impl GameState {
     /// Recompute the hash from scratch (slow, use sparingly)
     pub fn recompute_hash(&mut self) {
         use crate::search::zobrist::{
-            REP_SIDE_KEY, SIDE_KEY, castling_rights_key_from_bitfield, en_passant_key,
-            pawn_special_right_key, piece_key, rep_castling_rights_key_from_bitfield,
+            REP_SIDE_KEY, SIDE_KEY, en_passant_key, pawn_special_right_key, piece_key,
             rep_en_passant_key, rep_pawn_special_right_key, rep_piece_key,
         };
 
@@ -1601,9 +1618,9 @@ impl GameState {
             }
         }
 
-        // Hash EFFECTIVE castling rights using cached bitfield (O(1))
-        h ^= castling_rights_key_from_bitfield(self.effective_castling_rights);
-        rh ^= rep_castling_rights_key_from_bitfield(self.effective_castling_rights);
+        let (castle_h, castle_rh) = self.castling_hash_pair();
+        h ^= castle_h;
+        rh ^= castle_rh;
 
         // Hash individual PAWN special rights (double-push rights)
         for coord in &self.special_rights {
@@ -3200,8 +3217,8 @@ impl GameState {
     pub fn make_move(&mut self, m: &Move) -> UndoMove {
         use crate::search::zobrist::{
             REP_SIDE_KEY, SIDE_KEY, en_passant_key, material_key, pawn_key,
-            pawn_special_right_key, piece_key, rep_castling_rights_key_from_bitfield,
-            rep_en_passant_key, rep_pawn_special_right_key, rep_piece_key,
+            pawn_special_right_key, piece_key, rep_en_passant_key, rep_pawn_special_right_key,
+            rep_piece_key,
         };
 
         // Push hashes before move (for repetition detection)
@@ -3434,11 +3451,10 @@ impl GameState {
             self.rep_hash ^= rep_en_passant_key(ep.square.x, ep.square.y);
         }
 
-        // Update castling rights (remove old)
-        self.hash ^= crate::search::zobrist::castling_rights_key_from_bitfield(
-            self.effective_castling_rights,
-        );
-        self.rep_hash ^= rep_castling_rights_key_from_bitfield(self.effective_castling_rights);
+        let (old_castle_hash, old_castle_rep_hash) = self.castling_hash_pair();
+        self.hash ^= old_castle_hash;
+        self.rep_hash ^= old_castle_rep_hash;
+        let mut castling_state_dirty = false;
 
         // Update rights for the moving piece
         if self.special_rights.remove(&m.from) {
@@ -3447,34 +3463,8 @@ impl GameState {
             if piece.piece_type() == PieceType::Pawn {
                 self.hash ^= pawn_special_right_key(m.from.x, m.from.y);
                 self.rep_hash ^= rep_pawn_special_right_key(m.from.x, m.from.y);
-            } else if piece.piece_type().is_royal() {
-                // King moves: loses ALL castling rights for its side
-                if piece.color() == PlayerColor::White {
-                    self.effective_castling_rights &= !3;
-                } else {
-                    self.effective_castling_rights &= !12;
-                }
             } else {
-                // Non-pawn piece moves: could be a castling partner
-                if let Some(k_pos) = if piece.color() == PlayerColor::White {
-                    self.white_royals.first().copied()
-                } else {
-                    self.black_royals.first().copied()
-                } && m.from.y == k_pos.y
-                {
-                    let idx = if piece.color() == PlayerColor::White {
-                        if m.from.x > k_pos.x { 0 } else { 1 }
-                    } else if m.from.x > k_pos.x {
-                        2
-                    } else {
-                        3
-                    };
-                    self.castling_partner_counts[idx] =
-                        self.castling_partner_counts[idx].saturating_sub(1);
-                    if self.castling_partner_counts[idx] == 0 {
-                        self.effective_castling_rights &= !(1 << idx);
-                    }
-                }
+                castling_state_dirty = true;
             }
         }
 
@@ -3486,47 +3476,8 @@ impl GameState {
             if captured.piece_type() == PieceType::Pawn {
                 self.hash ^= pawn_special_right_key(m.to.x, m.to.y);
                 self.rep_hash ^= rep_pawn_special_right_key(m.to.x, m.to.y);
-            } else if captured.piece_type().is_royal() {
-                // King captured: its side loses ALL castling rights
-                if captured.color() == PlayerColor::White {
-                    self.effective_castling_rights &= !3;
-                } else {
-                    self.effective_castling_rights &= !12;
-                }
             } else {
-                // Non-pawn partner captured
-                if captured.color() == PlayerColor::White {
-                    self.white_nonpawn_hash ^=
-                        piece_key(captured.piece_type(), captured.color(), m.to.x, m.to.y);
-                } else if captured.color() == PlayerColor::Black {
-                    self.black_nonpawn_hash ^=
-                        piece_key(captured.piece_type(), captured.color(), m.to.x, m.to.y);
-                }
-                if captured.piece_type() == PieceType::Knight
-                    || captured.piece_type() == PieceType::Bishop
-                {
-                    self.minor_hash ^=
-                        piece_key(captured.piece_type(), captured.color(), m.to.x, m.to.y);
-                }
-                if let Some(k_pos) = if captured.color() == PlayerColor::White {
-                    self.white_royals.first().copied()
-                } else {
-                    self.black_royals.first().copied()
-                } && m.to.y == k_pos.y
-                {
-                    let idx = if captured.color() == PlayerColor::White {
-                        if m.to.x > k_pos.x { 0 } else { 1 }
-                    } else if m.to.x > k_pos.x {
-                        2
-                    } else {
-                        3
-                    };
-                    self.castling_partner_counts[idx] =
-                        self.castling_partner_counts[idx].saturating_sub(1);
-                    if self.castling_partner_counts[idx] == 0 {
-                        self.effective_castling_rights &= !(1 << idx);
-                    }
-                }
+                castling_state_dirty = true;
             }
         }
 
@@ -3564,34 +3515,9 @@ impl GameState {
             // Rook also loses special rights
             if self.special_rights.remove(rook_coord) {
                 undo_info.special_rights_removed.push(*rook_coord);
-                // This rook was a castling partner, decrement its count
-                if let Some(k_pos) = if rook.color() == PlayerColor::White {
-                    self.white_royals.first().copied()
-                } else {
-                    self.black_royals.first().copied()
-                } && rook_coord.y == k_pos.y
-                {
-                    let idx = if rook.color() == PlayerColor::White {
-                        if rook_coord.x > k_pos.x { 0 } else { 1 }
-                    } else if rook_coord.x > k_pos.x {
-                        2
-                    } else {
-                        3
-                    };
-                    self.castling_partner_counts[idx] =
-                        self.castling_partner_counts[idx].saturating_sub(1);
-                    if self.castling_partner_counts[idx] == 0 {
-                        self.effective_castling_rights &= !(1 << idx);
-                    }
-                }
+                castling_state_dirty = true;
             }
         }
-
-        // Update castling rights (add new)
-        self.hash ^= crate::search::zobrist::castling_rights_key_from_bitfield(
-            self.effective_castling_rights,
-        );
-        self.rep_hash ^= rep_castling_rights_key_from_bitfield(self.effective_castling_rights);
 
         // Move piece (handle promotion if needed)
         let final_piece = if let Some(promo_type) = m.promotion {
@@ -3641,6 +3567,14 @@ impl GameState {
         // Update spatial indices for moved piece on destination square
         self.spatial_indices
             .add(m.to.x, m.to.y, final_piece.packed());
+
+        if castling_state_dirty {
+            self.recompute_castling_state();
+        }
+
+        let (new_castle_hash, new_castle_rep_hash) = self.castling_hash_pair();
+        self.hash ^= new_castle_hash;
+        self.rep_hash ^= new_castle_rep_hash;
 
         // Update En Passant state
         self.en_passant = None;

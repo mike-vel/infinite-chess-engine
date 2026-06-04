@@ -143,6 +143,14 @@ pub fn pawn_special_right_key(x: i64, y: i64) -> u64 {
     hash_coordinate(x, y) ^ PAWN_SPECIAL_RIGHT_MIXER
 }
 
+/// Key for exact castling special rights when a 4-bit castling summary is ambiguous.
+const CASTLING_SPECIAL_RIGHT_MIXER: u64 = 0x6D1B54A32F9C0E77;
+
+#[inline(always)]
+pub fn castling_special_right_key(x: i64, y: i64) -> u64 {
+    hash_coordinate(x, y) ^ CASTLING_SPECIAL_RIGHT_MIXER
+}
+
 /// Key for pawn structure hash (used by correction history).
 /// Includes only pawn positions, helps CoaIP variants.
 const PAWN_KEY_MIXER: u64 = 0xABCDEF0123456789;
@@ -197,6 +205,8 @@ const REP_EN_PASSANT_KEY_MIXER: u64 = 0x3141592653589793;
 
 const REP_PAWN_SPECIAL_RIGHT_MIXER: u64 = 0x2718281828459045;
 
+const REP_CASTLING_SPECIAL_RIGHT_MIXER: u64 = 0x9D8E7F6A5B4C3D21;
+
 const REP_CASTLING_RIGHTS_KEYS: [u64; 4] = [
     0xA0B1C2D3E4F50607,
     0x0817263544536271,
@@ -235,6 +245,11 @@ pub fn rep_en_passant_key(x: i64, y: i64) -> u64 {
 #[inline(always)]
 pub fn rep_pawn_special_right_key(x: i64, y: i64) -> u64 {
     hash_coordinate(x, y) ^ REP_PAWN_SPECIAL_RIGHT_MIXER
+}
+
+#[inline(always)]
+pub fn rep_castling_special_right_key(x: i64, y: i64) -> u64 {
+    hash_coordinate(x, y) ^ REP_CASTLING_SPECIAL_RIGHT_MIXER
 }
 
 /// Secondary hash for castling rights from a 4-bit bitfield.
