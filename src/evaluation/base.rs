@@ -380,16 +380,16 @@ const EG_KING_TROPISM_BONUS: i32 = 6; // King centralized -> piece proximity mat
 
 // Shelter / Ring
 const MG_KING_RING_MISSING_PENALTY: i32 = 45;
-const EG_KING_RING_MISSING_PENALTY: i32 = 20; // Less penalty in EG
+const EG_KING_RING_MISSING_PENALTY: i32 = 10; // Less penalty in EG
 
 const MG_KING_PAWN_SHIELD_BONUS: i32 = 18;
 const EG_KING_PAWN_SHIELD_BONUS: i32 = 5; // Shield less critical
 
 const MG_KING_PAWN_AHEAD_PENALTY: i32 = 20;
-const EG_KING_PAWN_AHEAD_PENALTY: i32 = 5;
+const EG_KING_PAWN_AHEAD_PENALTY: i32 = 0;
 
 const MG_KING_OPEN_FILE_PENALTY: i32 = 25;
-const EG_KING_OPEN_FILE_PENALTY: i32 = 10;
+const EG_KING_OPEN_FILE_PENALTY: i32 = 0;
 
 // Structural
 const MG_CONNECTED_PAWN_BONUS: i32 = 8;
@@ -3468,8 +3468,8 @@ pub fn evaluate_king_positioning_traced<T: EvaluationTracer>(
         b_activity += (near_friendly_king_bonus - near_enemy_king_penalty) * weight / 3;
     }
 
-    // Apply adjustments to effectively discard the pawns that are far from the kings.
-    let max_effective_dist = nearest_pawn_distance + 5; // for preventing bonuses when pawns are too far away
+    // Apply adjustments to nullify the effect if both friendly and enemy kings are far.
+    let max_effective_dist = nearest_pawn_distance + 5;
     for (friendly_dist, enemy_dist) in w_king_pawn_distances {
         w_activity += (enemy_dist.min(max_effective_dist) - friendly_dist.min(max_effective_dist)).clamp(-30, 30);
     }
