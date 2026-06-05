@@ -972,7 +972,7 @@ pub fn get_pseudo_legal_moves_for_piece_into(
         }
         PieceType::King => {
             generate_compass_moves_into(board, from, piece, 1, MoveGenType::All, out);
-            generate_castling_moves_into(board, from, piece, special_rights, indices, out);
+            generate_castling_moves_into(board, from, piece, special_rights, game_rules, indices, out);
         }
         PieceType::Guard => {
             generate_compass_moves_into(board, from, piece, 1, MoveGenType::All, out)
@@ -1118,7 +1118,7 @@ pub fn get_pseudo_legal_moves_for_piece_into(
         PieceType::RoyalCentaur => {
             generate_compass_moves_into(board, from, piece, 1, MoveGenType::All, out);
             generate_leaper_moves_into(board, from, piece, 1, 2, MoveGenType::All, out);
-            generate_castling_moves_into(board, from, piece, special_rights, indices, out);
+            generate_castling_moves_into(board, from, piece, special_rights, game_rules, indices, out);
         }
         PieceType::Huygen => {
             generate_huygen_moves_into(board, from, piece, indices, MoveGenType::All, out)
@@ -1603,6 +1603,7 @@ fn generate_castling_moves(
     from: &Coordinate,
     piece: &Piece,
     special_rights: &FxHashSet<Coordinate>,
+    game_rules: &GameRules,
     indices: &SpatialIndices,
 ) -> MoveList {
     let mut moves = MoveList::new();
@@ -1619,7 +1620,7 @@ fn generate_castling_moves(
             // Must be same color and a valid castling partner (rook-like piece, not pawn)
             if target_piece.color() == piece.color()
                 && target_piece.piece_type() != PieceType::Pawn
-                && !piece.piece_type().is_royal()
+                && !target_piece.piece_type().is_royal()
             {
                 let dx = coord.x - from.x;
                 let dy = coord.y - from.y;
@@ -1643,6 +1644,11 @@ fn generate_castling_moves(
 
                     if clear {
                         let opponent = piece.color().opponent();
+                        let opponent_can_checkmate = match piece.color() {
+                            PlayerColor::White => game_rules.black_win_condition.requires_check_evasion(),
+                            PlayerColor::Black => game_rules.white_win_condition.requires_check_evasion(),
+                            PlayerColor::Neutral => true,
+                        };
 
                         let path_1 = from.x + dir;
                         let path_2 = from.x + (dir * 2);
@@ -1651,9 +1657,10 @@ fn generate_castling_moves(
                         let pos_2 = Coordinate::new(path_2, from.y);
 
                         {
-                            if !is_square_attacked(board, from, opponent, indices)
-                                && !is_square_attacked(board, &pos_1, opponent, indices)
-                                && !is_square_attacked(board, &pos_2, opponent, indices)
+                            if !opponent_can_checkmate
+                                || (!is_square_attacked(board, from, opponent, indices)
+                                    && !is_square_attacked(board, &pos_1, opponent, indices)
+                                    && !is_square_attacked(board, &pos_2, opponent, indices))
                             {
                                 let to_x = from.x + (dir * 2);
                                 let mut castling_move =
@@ -1799,7 +1806,7 @@ fn generate_quiets_for_piece(
         PieceType::King => {
             generate_compass_moves_into(board, from, piece, 1, MoveGenType::Quiets, out);
             // Castling is always a quiet move
-            let castling = generate_castling_moves(board, from, piece, special_rights, indices);
+            let castling = generate_castling_moves(board, from, piece, special_rights, game_rules, indices);
             out.extend(castling);
         }
         PieceType::Guard => {
@@ -1812,7 +1819,7 @@ fn generate_quiets_for_piece(
         PieceType::RoyalCentaur => {
             generate_compass_moves_into(board, from, piece, 1, MoveGenType::Quiets, out);
             generate_leaper_moves_into(board, from, piece, 1, 2, MoveGenType::Quiets, out);
-            let castling = generate_castling_moves(board, from, piece, special_rights, indices);
+            let castling = generate_castling_moves(board, from, piece, special_rights, game_rules, indices);
             out.extend(castling);
         }
         PieceType::Hawk => {
@@ -1909,7 +1916,7 @@ fn generate_quiets_for_piece(
                 out,
             );
             // Castling support for RoyalQueen
-            let castling = generate_castling_moves(board, from, piece, special_rights, indices);
+            let castling = generate_castling_moves(board, from, piece, special_rights, game_rules, indices);
             out.extend(castling);
         }
         PieceType::Chancellor => {
@@ -3416,6 +3423,7 @@ fn generate_castling_moves_into(
     from: &Coordinate,
     piece: &Piece,
     special_rights: &FxHashSet<Coordinate>,
+    game_rules: &GameRules,
     indices: &SpatialIndices,
     out: &mut MoveList,
 ) {
@@ -3448,12 +3456,18 @@ fn generate_castling_moves_into(
 
                 if clear {
                     let opponent = piece.color().opponent();
+                    let opponent_can_checkmate = match piece.color() {
+                        PlayerColor::White => game_rules.black_win_condition.requires_check_evasion(),
+                        PlayerColor::Black => game_rules.white_win_condition.requires_check_evasion(),
+                        PlayerColor::Neutral => true,
+                    };
                     let pos_1 = Coordinate::new(from.x + dir, from.y);
                     let pos_2 = Coordinate::new(from.x + dir * 2, from.y);
 
-                    if !is_square_attacked(board, from, opponent, indices)
-                        && !is_square_attacked(board, &pos_1, opponent, indices)
-                        && !is_square_attacked(board, &pos_2, opponent, indices)
+                    if !opponent_can_checkmate
+                        || (!is_square_attacked(board, from, opponent, indices)
+                            && !is_square_attacked(board, &pos_1, opponent, indices)
+                            && !is_square_attacked(board, &pos_2, opponent, indices))
                     {
                         let mut castling_move =
                             Move::new(*from, Coordinate::new(from.x + dir * 2, from.y), *piece);
@@ -4050,7 +4064,7 @@ mod tests {
             let from = Coordinate::new(5, 1);
             let piece = Piece::new(PieceType::King, PlayerColor::White);
 
-            let moves = generate_castling_moves(&game.board, &from, &piece, &game.special_rights, &game.spatial_indices);
+            let moves = generate_castling_moves(&game.board, &from, &piece, &game.special_rights, &game.game_rules, &game.spatial_indices);
 
             // Test that the function runs without panicking and returns a MoveList
             // Castling availability depends on variant rules and board state
