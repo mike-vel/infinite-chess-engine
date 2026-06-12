@@ -90,7 +90,6 @@ const VARIANTS = {
             promotion_ranks: { white: ['6'], black: ['-6'] },
             promotions_allowed: ['q', 'r', 'b', 'n', 'g', 'h', 'c'],
         },
-        defaultDisabled: true,
     },
     Pawn_Horde: {
         position: 'k5,2+|q4,2|r1,2+|n7,2|n2,2|r8,2+|b3,2|b6,2|P2,-1+|P3,-1+|P6,-1+|P7,-1+|P1,-2+|P2,-2+|P4,-2+|P5,-2+|P6,-2+|P7,-2+|P8,-2+|P1,-3+|P2,-3+|P4,-3+|P5,-3+|P6,-3+|P7,-3+|P8,-3+|P1,-4+|P2,-4+|P4,-4+|P5,-4+|P6,-4+|P7,-4+|P8,-4+|P1,-5+|P2,-5+|P4,-5+|P5,-5+|P6,-5+|P7,-5+|P8,-5+|P1,-6+|P2,-6+|P4,-6+|P5,-6+|P6,-6+|P7,-6+|P8,-6+|P3,-2+|P3,-3+|P3,-4+|P3,-5+|P3,-6+|P1,-7+|P2,-7+|P3,-7+|P4,-7+|P5,-7+|P6,-7+|P7,-7+|P8,-7+|P0,-6+|P0,-7+|P9,-6+|P9,-7+|p9,2+|p1,1+|p2,1+|p3,1+|p4,1+|p5,1+|p6,1+|p7,1+|p8,1+|p0,2+',
@@ -137,7 +136,6 @@ const VARIANTS = {
             promotions_allowed: ['q', 'r', 'b', 'n'],
             win_conditions: { white: ['allroyalscaptured'], black: ['allroyalscaptured'] },
         },
-        defaultDisabled: true,
     },
     Double_King_Chess: {
         position: "k5,8+|k4,8+|n2,8|n7,8|r1,8+|r8,8+|b3,8|b6,8|p1,7+|p2,7+|p3,7+|p4,7+|p5,7+|p6,7+|p7,7+|p8,7+|K5,1+|K4,1+|N2,1|N7,1|R1,1+|R8,1+|B3,1|B6,1|P1,2+|P2,2+|P3,2+|P4,2+|P5,2+|P6,2+|P7,2+|P8,2+",
@@ -145,7 +143,6 @@ const VARIANTS = {
             promotions_allowed: ['q', 'r', 'b', 'n'],
         },
         worldBorder: 0,
-        defaultDisabled: true,
     },
     Triple_King_Maze: {
         // variant created by Nikita
@@ -156,7 +153,6 @@ const VARIANTS = {
             move_rule: 200,
         },
         worldBorder: 0,
-        defaultDisabled: true,
     },
     All_Pieces_Classical: {
         // Classical setup, allpiecescaptured win condition (tests base eval)
@@ -165,7 +161,6 @@ const VARIANTS = {
             promotions_allowed: ['q', 'r', 'b', 'n'],
             win_conditions: { white: ['allpiecescaptured'], black: ['allpiecescaptured'] },
         },
-        defaultDisabled: true,
     },
 };
 
@@ -208,11 +203,6 @@ function getAllVariants() {
 // Get variants that have custom evaluation (volatility warning for SPRT)
 function getVariantsWithCustomEval() {
     return Object.keys(VARIANTS).filter(name => VARIANTS[name].hasCustomEval === true);
-}
-
-// Get variants that are not default (volatility warning for SPRT)
-function getVariantsWithDefaultDisabled() {
-    return Object.keys(VARIANTS).filter(name => VARIANTS[name].defaultDisabled === true);
 }
 
 // Map internal engine piece letters to infinitechess.org ICN codes (lowercase for ICN)
@@ -302,4 +292,4 @@ function generateSetupICN(variantName, startTurn, halfmoveClock, fullmoveNumber,
     return `${variantTag}${startTurn} ${halfmoveClock}/${moveLimit} ${fullmoveNumber} ${promoToken} ${boundsToken} ${winConditionStr}${startPosStr}${movesStr ? ' ' + movesStr : ''}`;
 }
 
-export { VARIANTS, getVariantData, getAllVariants, getVariantsWithCustomEval, getVariantsWithDefaultDisabled, engineLetterToICNCode, generateSetupICN };
+export { VARIANTS, getVariantData, getAllVariants, getVariantsWithCustomEval, engineLetterToICNCode, generateSetupICN };
