@@ -285,17 +285,6 @@ fn knight_offset_index(dx: i64, dy: i64) -> u32 {
     }
 }
 
-/// Pawn attack direction
-#[inline]
-fn pawn_attack_dir(dx: i64, pawn_color: PlayerColor) -> u32 {
-    let effective_dx = if pawn_color == PlayerColor::White {
-        dx
-    } else {
-        -dx
-    };
-    if effective_dx < 0 { 0 } else { 1 }
-}
-
 /// Slider distance bin
 #[inline]
 fn slider_dist_bin(dist: i64) -> u32 {
@@ -482,7 +471,7 @@ fn build_threat_list(gs: &GameState, perspective: PlayerColor) -> Vec<u32> {
                         }
                         if let Some(vt) = victim_type(victim.piece_type()) {
                             let vic_friendly = vic_color == perspective;
-                            let atk_dir = pawn_attack_dir(dx, att_color);
+                            let atk_dir: u32 = if dx < 0 { 0 } else { 1 };
                             let feat = encode_pawn_threat(att_friendly, vic_friendly, atk_dir, vt);
                             features.push(feat);
                         }
@@ -625,5 +614,33 @@ mod tests {
         assert_eq!(slider_dist_bin(1), 0);
         assert_eq!(slider_dist_bin(10), 5);
         assert_eq!(slider_dist_bin(500), 10);
+    }
+
+    #[test]
+    fn test_pawn_threat_direction_matches_generator() {
+        use crate::game::GameState;
+
+        // Black pawn at (5,5) attacks board-right (dx = +1) onto a white knight at
+        // (6,4). The training-data generator encodes board-right as attack_dir = 1
+        // regardless of color, so inference must match (no color flip). The old
+        // pawn_attack_dir flipped for black and would have emitted attack_dir = 0.
+        let mut game = GameState::new();
+        game.setup_position_from_icn("w (8;q|1;q) K1,1|k8,8|p5,5|N6,4");
+
+        let black_feats = build_threat_list(&game, PlayerColor::Black);
+        let vt = victim_type(PieceType::Knight).unwrap();
+
+        // att_friendly = true (own black pawn), vic_friendly = false (enemy white knight)
+        let expected = encode_pawn_threat(true, false, 1, vt);
+        let flipped = encode_pawn_threat(true, false, 0, vt);
+
+        assert!(
+            black_feats.contains(&expected),
+            "board-right black-pawn threat must encode attack_dir=1 (generator convention)"
+        );
+        assert!(
+            !black_feats.contains(&flipped),
+            "the color-flipped (old buggy) attack_dir=0 must not be produced"
+        );
     }
 }

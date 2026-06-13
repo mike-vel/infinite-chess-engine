@@ -4861,7 +4861,7 @@ fn quiescence(
                         static_eval: unadjusted_static_eval,
                         is_pv: false,
                         best_move: None,
-                        ply: 0,
+                        ply,
                     },
                 );
             }
@@ -5049,7 +5049,7 @@ fn quiescence(
             static_eval: unadjusted_static_eval,
             is_pv: pv_hit,
             best_move,
-            ply: 0,
+            ply,
         },
     );
 

@@ -1755,7 +1755,7 @@ fn main() {
                 try_get_commit_info_from_git("HEAD")
             };
 
-            let games_path = games;
+            let games_path = games.or_else(|| resume.clone());
             let results_path = results;
 
             ctrlc::set_handler(move || {

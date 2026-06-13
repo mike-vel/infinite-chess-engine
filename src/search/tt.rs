@@ -3,8 +3,8 @@ use crate::moves::Move;
 
 use super::INFINITY;
 use super::tt_defs::{
-    TTFlag, TTProbeParams, TTProbeResult, TTStoreParams, clamp_to_i16, pack_coord, unpack_coord,
-    value_from_tt, value_to_tt,
+    TTFlag, TTProbeParams, TTProbeResult, TTStoreParams, clamp_to_i16, pack_coord,
+    score_from_i16, score_to_i16, unpack_coord, value_from_tt, value_to_tt,
 };
 
 const ENTRIES_PER_BUCKET: usize = 4; // 4 × 16 = 64 bytes
@@ -277,7 +277,7 @@ impl LocalTranspositionTable {
                 }
 
                 let score = value_from_tt(
-                    e.score16 as i32,
+                    score_from_i16(e.score16 as i32),
                     params.ply,
                     params.rule50_count,
                     params.rule_limit,
@@ -353,7 +353,7 @@ impl LocalTranspositionTable {
                                 params.is_pv,
                                 params.flag,
                             ),
-                            score16: clamp_to_i16(adj_score),
+                            score16: score_to_i16(adj_score),
                             eval16: store_eval,
                             move_data: old_move_data,
                         };
@@ -377,7 +377,7 @@ impl LocalTranspositionTable {
                 key16,
                 depth: params.depth as u8,
                 gen_bound: TTEntry::pack_gen_bound(self.generation, params.is_pv, params.flag),
-                score16: clamp_to_i16(adj_score),
+                score16: score_to_i16(adj_score),
                 eval16: clamp_to_i16(params.static_eval),
                 move_data: NO_MOVE,
             };
