@@ -4,8 +4,8 @@ use crate::moves::Move;
 
 use super::INFINITY;
 use super::tt_defs::{
-    TTFlag, TTProbeParams, TTProbeResult, TTStoreParams, clamp_to_i16, pack_coord, unpack_coord,
-    value_from_tt, value_to_tt,
+    TTFlag, TTProbeParams, TTProbeResult, TTStoreParams, clamp_to_i16, pack_coord,
+    score_from_i16, score_to_i16, unpack_coord, value_from_tt, value_to_tt,
 };
 
 const ENTRIES_PER_BUCKET: usize = 4;
@@ -304,8 +304,12 @@ impl SharedTranspositionTable {
         let key16 = self.hash_key16(params.hash);
         for e in &self.buckets[self.bucket_index(params.hash)].entries {
             if let Some((score, eval, depth, gen_bound, best_move)) = e.read(key16, params.hash) {
-                let score =
-                    value_from_tt(score, params.ply, params.rule50_count, params.rule_limit);
+                let score = value_from_tt(
+                    score_from_i16(score),
+                    params.ply,
+                    params.rule50_count,
+                    params.rule_limit,
+                );
                 let flag = TTEntry::flag(gen_bound);
                 let mut cutoff = INFINITY + 1;
                 if depth as usize >= params.depth {
@@ -412,7 +416,7 @@ impl SharedTranspositionTable {
                         | ((params.depth as u64) << 16)
                         | ((TTEntry::pack_gen_bound(r#gen, params.is_pv, params.flag) as u64)
                             << 24)
-                        | (((clamp_to_i16(adj_score) as u16) as u64) << 32)
+                        | (((score_to_i16(adj_score) as u16) as u64) << 32)
                         | (((store_eval as u16) as u64) << 48);
 
                     unsafe {
@@ -442,25 +446,16 @@ impl SharedTranspositionTable {
                 replace_idx = i;
             }
         }
-
-        let new_prio = params.depth as i32
-            + if params.flag == TTFlag::Exact || params.is_pv {
-                2
-            } else {
-                0
-            };
-
-        if new_prio >= worst {
-            bucket.entries[replace_idx].write(
-                key16,
-                clamp_to_i16(adj_score),
-                clamp_to_i16(params.static_eval),
-                params.depth as u8,
-                TTEntry::pack_gen_bound(r#gen, params.is_pv, params.flag),
-                &params.best_move,
-                params.hash,
-            );
-        }
+        
+        bucket.entries[replace_idx].write(
+            key16,
+            score_to_i16(adj_score),
+            clamp_to_i16(params.static_eval),
+            params.depth as u8,
+            TTEntry::pack_gen_bound(r#gen, params.is_pv, params.flag),
+            &params.best_move,
+            params.hash,
+        );
     }
 
     pub fn increment_age(&self) {

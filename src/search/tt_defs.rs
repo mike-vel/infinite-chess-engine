@@ -1,4 +1,4 @@
-use super::{MATE_SCORE, MATE_VALUE};
+use super::{MATE_SCORE, MATE_VALUE, MAX_PLY};
 use crate::moves::Move;
 
 // ============================================================================
@@ -26,6 +26,91 @@ pub fn value_to_tt(value: i32, ply: usize) -> i32 {
 #[inline]
 pub fn clamp_to_i16(v: i32) -> i16 {
     v.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
+
+// The engine's decisive constants are large so that even huge evaluations on an unbounded
+// board cannot be mistaken for a mate. They do NOT fit in i16.
+//
+// Real mate scores always lie within MAX_PLY of MATE_VALUE, and `value_to_tt`
+// can shift them by up to another MAX_PLY, so they occupy a band of width
+// 2*MAX_PLY+1. We reserve that band at each end of the i16 range and map mate
+// scores into it losslessly; normal scores are clamped to the remaining range.
+
+/// Number of distinct i16 slots reserved for mate scores at each end of the range.
+const TT_MATE_BAND: i32 = 2 * MAX_PLY as i32 + 1;
+/// Largest magnitude a normal (non-mate) score may occupy in the i16 field.
+const TT_SCORE_NORMAL_MAX: i32 = i16::MAX as i32 - TT_MATE_BAND;
+
+/// Pack a (ply-adjusted) node score into the i16 TT score field, preserving mate
+/// scores. Inverse of [`score_from_i16`].
+#[inline]
+pub fn score_to_i16(v: i32) -> i16 {
+    if v > MATE_SCORE {
+        // Closer mates (larger v) map to larger stored values, just below i16::MAX.
+        let offset = (MATE_VALUE - v + MAX_PLY as i32).clamp(0, TT_MATE_BAND - 1);
+        (i16::MAX as i32 - offset) as i16
+    } else if v < -MATE_SCORE {
+        let offset = (MATE_VALUE + v + MAX_PLY as i32).clamp(0, TT_MATE_BAND - 1);
+        (-(i16::MAX as i32) + offset) as i16
+    } else {
+        v.clamp(-TT_SCORE_NORMAL_MAX, TT_SCORE_NORMAL_MAX) as i16
+    }
+}
+
+/// Expand a stored i16 TT score back to the engine's score range. The argument
+/// is the stored value sign-extended to i32. Inverse of [`score_to_i16`].
+#[inline]
+pub fn score_from_i16(s: i32) -> i32 {
+    if s > TT_SCORE_NORMAL_MAX {
+        let offset = i16::MAX as i32 - s;
+        MATE_VALUE - (offset - MAX_PLY as i32)
+    } else if s < -TT_SCORE_NORMAL_MAX {
+        let offset = i16::MAX as i32 + s;
+        -MATE_VALUE + (offset - MAX_PLY as i32)
+    } else {
+        s
+    }
+}
+
+#[cfg(test)]
+mod score_pack_tests {
+    use super::*;
+
+    #[test]
+    fn normal_scores_round_trip() {
+        for v in [0, 1, -1, 100, -100, 5000, -5000, TT_SCORE_NORMAL_MAX, -TT_SCORE_NORMAL_MAX] {
+            assert_eq!(score_from_i16(score_to_i16(v) as i32), v, "v = {v}");
+        }
+    }
+
+    #[test]
+    fn mate_scores_round_trip() {
+        // Cover mate scores as produced by value_to_tt across the legal ply range.
+        for ply in 0..=MAX_PLY {
+            for dist in 0..=MAX_PLY {
+                let win = MATE_VALUE - dist as i32; // mate in `dist`
+                let adj = value_to_tt(win, ply);
+                let back = score_from_i16(score_to_i16(adj) as i32);
+                assert_eq!(back, adj, "win mate dist={dist} ply={ply}");
+
+                let loss = -(MATE_VALUE - dist as i32);
+                let adj = value_to_tt(loss, ply);
+                let back = score_from_i16(score_to_i16(adj) as i32);
+                assert_eq!(back, adj, "loss mate dist={dist} ply={ply}");
+            }
+        }
+    }
+
+    #[test]
+    fn mate_and_normal_bands_are_disjoint() {
+        // A near-mate value survives as a recognizable mate (> MATE_SCORE)...
+        let stored = score_to_i16(MATE_VALUE - 3);
+        assert!(score_from_i16(stored as i32) > MATE_SCORE);
+        // ...while the largest normal score stays below the mate threshold.
+        let stored = score_to_i16(TT_SCORE_NORMAL_MAX);
+        assert!(score_from_i16(stored as i32) <= MATE_SCORE);
+    }
 }
 
 #[inline]
