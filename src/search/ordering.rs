@@ -36,7 +36,11 @@ pub fn score_move(
     if let Some(target) = game.board.get_piece(m.to.x, m.to.y) {
         let victim_val = game.get_piece_value(target.piece_type(), target.color());
         let attacker_val = game.get_piece_value(m.piece.piece_type(), m.piece.color());
-        let mvv_lva = victim_val * 10 - attacker_val;
+        // Include promotion gain so capture-promotions sort by their true value.
+        let promo_gain = m
+            .promotion
+            .map_or(0, |pt| game.get_piece_value(pt, m.piece.color()) - attacker_val);
+        let mvv_lva = (victim_val + promo_gain) * 10 - attacker_val;
 
         // SEE threshold check
         let is_winning = super::see_ge(game, m, see_winning_threshold());
@@ -199,17 +203,33 @@ pub fn sort_moves_root(
     }
 }
 
-/// Fast capture sorting using MVV-LVA only (no SEE for qsearch captures)
+/// MVV-LVA-style ordering key including promotion gain. Handles quiet
+/// promotions (no captured piece) too: promoting is itself a material gain, so
+/// the move sorts like a high-value capture instead of landing at the bottom
+/// with the genuine non-captures. For a plain capture this is the usual
+/// `victim * 10 - attacker`.
+#[inline]
+fn capture_sort_key(game: &GameState, m: &Move) -> i32 {
+    let attacker_color = m.piece.color();
+    let attacker_val = game.get_piece_value(m.piece.piece_type(), attacker_color);
+    let victim_val = game
+        .board
+        .get_piece(m.to.x, m.to.y)
+        .map_or(0, |t| game.get_piece_value(t.piece_type(), t.color()));
+    let promo_gain = m
+        .promotion
+        .map_or(0, |pt| game.get_piece_value(pt, attacker_color) - attacker_val);
+    (victim_val + promo_gain) * 10 - attacker_val
+}
+
+/// Fast capture sorting using MVV-LVA + promotion value (no SEE for qsearch).
 #[allow(clippy::needless_range_loop)]
 pub fn sort_captures(game: &GameState, moves: &mut MoveList) {
     // For captures, use selection sort since qsearch usually has few captures
     if moves.len() <= 16 {
         let mut scores = [0i32; 128];
         for (i, m) in moves.iter().enumerate() {
-            if let Some(target) = game.board.get_piece(m.to.x, m.to.y) {
-                scores[i] = game.get_piece_value(target.piece_type(), target.color()) * 10
-                    - game.get_piece_value(m.piece.piece_type(), m.piece.color());
-            }
+            scores[i] = capture_sort_key(game, m);
         }
 
         for i in 0..moves.len().saturating_sub(1) {
@@ -229,14 +249,7 @@ pub fn sort_captures(game: &GameState, moves: &mut MoveList) {
             }
         }
     } else {
-        moves.sort_by_cached_key(|m| {
-            if let Some(target) = game.board.get_piece(m.to.x, m.to.y) {
-                -(game.get_piece_value(target.piece_type(), target.color()) * 10
-                    - game.get_piece_value(m.piece.piece_type(), m.piece.color()))
-            } else {
-                0
-            }
-        });
+        moves.sort_by_cached_key(|m| -capture_sort_key(game, m));
     }
 }
 

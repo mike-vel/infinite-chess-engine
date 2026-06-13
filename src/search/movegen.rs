@@ -451,6 +451,10 @@ impl StagedMoveGen {
         if let Some(target) = game.board.get_piece(m.to.x, m.to.y) {
             let victim_val = game.get_piece_value(target.piece_type(), target.color());
             let attacker_val = game.get_piece_value(m.piece.piece_type(), m.piece.color());
+            // Include promotion gain so capture-promotions sort by their true value.
+            let promo_gain = m
+                .promotion
+                .map_or(0, |pt| game.get_piece_value(pt, m.piece.color()) - attacker_val);
 
             let pt_idx = m.piece.piece_type() as usize;
             let target_idx = target.piece_type() as usize;
@@ -465,7 +469,7 @@ impl StagedMoveGen {
             let hist_idx = hash_move_dest(m);
             let history_score = searcher.history[pt_idx][hist_idx];
 
-            10 * victim_val - attacker_val + (cap_hist / 8) + (history_score / 8)
+            10 * (victim_val + promo_gain) - attacker_val + (cap_hist / 8) + (history_score / 8)
         } else {
             0
         }

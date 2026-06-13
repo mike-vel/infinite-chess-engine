@@ -442,25 +442,16 @@ impl SharedTranspositionTable {
                 replace_idx = i;
             }
         }
-
-        let new_prio = params.depth as i32
-            + if params.flag == TTFlag::Exact || params.is_pv {
-                2
-            } else {
-                0
-            };
-
-        if new_prio >= worst {
-            bucket.entries[replace_idx].write(
-                key16,
-                clamp_to_i16(adj_score),
-                clamp_to_i16(params.static_eval),
-                params.depth as u8,
-                TTEntry::pack_gen_bound(r#gen, params.is_pv, params.flag),
-                &params.best_move,
-                params.hash,
-            );
-        }
+        
+        bucket.entries[replace_idx].write(
+            key16,
+            clamp_to_i16(adj_score),
+            clamp_to_i16(params.static_eval),
+            params.depth as u8,
+            TTEntry::pack_gen_bound(r#gen, params.is_pv, params.flag),
+            &params.best_move,
+            params.hash,
+        );
     }
 
     pub fn increment_age(&self) {
