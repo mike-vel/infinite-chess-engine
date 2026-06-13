@@ -94,6 +94,11 @@ pub struct StagedMoveGen {
     // Pre-calculated continuation history pointers for the current ply:
     // [(idx, prev_cap, prev_ic, prev_piece, prev_to_h)]
     cont_history_indices: smallvec::SmallVec<[(usize, usize, usize, usize, usize); 3]>,
+
+    // Pinned-piece map for the side to move, computed once per node and shared
+    // between the capture and quiet generation stages (both stages otherwise
+    // recompute the identical map and re-allocate it).
+    pins_cache: Option<rustc_hash::FxHashMap<crate::board::Coordinate, (i64, i64)>>,
 }
 
 /// Sorts moves with score >= limit to the front in descending order.
@@ -223,6 +228,7 @@ impl StagedMoveGen {
             skip_quiets: false,
             excluded_move: None,
             cont_history_indices: smallvec::SmallVec::new(),
+            pins_cache: None,
         }
     }
 
@@ -640,29 +646,39 @@ impl StagedMoveGen {
         false
     }
 
+    /// Compute the side-to-move pin map once per node and cache it. Both the
+    /// capture and quiet stages need the identical map (same king, same turn,
+    /// same position during generation), so this avoids recomputing/re-allocating
+    /// it twice.
+    fn ensure_pins(&mut self, game: &GameState) {
+        if self.pins_cache.is_none() {
+            let king_pos = if game.turn == PlayerColor::White {
+                game.white_royals.first().copied()
+            } else {
+                game.black_royals.first().copied()
+            };
+            self.pins_cache = Some(match king_pos {
+                Some(kp) => game.compute_pins(&kp, game.turn),
+                None => rustc_hash::FxHashMap::default(),
+            });
+        }
+    }
+
     fn generate_captures(&mut self, game: &GameState, searcher: &Searcher) {
         let mut captures = MoveList::new();
 
-        let king_pos = if game.turn == PlayerColor::White {
-            game.white_royals.first().copied()
-        } else {
-            game.black_royals.first().copied()
-        };
-        let pinned = if let Some(kp) = king_pos {
-            game.compute_pins(&kp, game.turn)
-        } else {
-            rustc_hash::FxHashMap::default()
-        };
-
-        let ctx = MoveGenContext {
-            pinned: &pinned,
-            special_rights: &game.special_rights,
-            en_passant: &game.en_passant,
-            game_rules: &game.game_rules,
-            indices: &game.spatial_indices,
-            enemy_king_pos: game.enemy_king_pos(),
-        };
-        get_quiescence_captures(&game.board, game.turn, &ctx, &mut captures);
+        self.ensure_pins(game);
+        {
+            let ctx = MoveGenContext {
+                pinned: self.pins_cache.as_ref().unwrap(),
+                special_rights: &game.special_rights,
+                en_passant: &game.en_passant,
+                game_rules: &game.game_rules,
+                indices: &game.spatial_indices,
+                enemy_king_pos: game.enemy_king_pos(),
+            };
+            get_quiescence_captures(&game.board, game.turn, &ctx, &mut captures);
+        }
 
         for m in captures {
             if self.is_tt_move(&m) || self.is_excluded(&m) {
@@ -676,26 +692,18 @@ impl StagedMoveGen {
     fn generate_quiets(&mut self, game: &GameState, searcher: &Searcher) {
         let mut quiets = MoveList::new();
 
-        let king_pos = if game.turn == PlayerColor::White {
-            game.white_royals.first().copied()
-        } else {
-            game.black_royals.first().copied()
-        };
-        let pinned = if let Some(kp) = king_pos {
-            game.compute_pins(&kp, game.turn)
-        } else {
-            rustc_hash::FxHashMap::default()
-        };
-
-        let ctx = MoveGenContext {
-            pinned: &pinned,
-            special_rights: &game.special_rights,
-            en_passant: &game.en_passant,
-            game_rules: &game.game_rules,
-            indices: &game.spatial_indices,
-            enemy_king_pos: game.enemy_king_pos(),
-        };
-        get_quiet_moves_into(&game.board, game.turn, &ctx, &mut quiets);
+        self.ensure_pins(game);
+        {
+            let ctx = MoveGenContext {
+                pinned: self.pins_cache.as_ref().unwrap(),
+                special_rights: &game.special_rights,
+                en_passant: &game.en_passant,
+                game_rules: &game.game_rules,
+                indices: &game.spatial_indices,
+                enemy_king_pos: game.enemy_king_pos(),
+            };
+            get_quiet_moves_into(&game.board, game.turn, &ctx, &mut quiets);
+        }
 
         for m in quiets {
             if self.is_tt_move(&m)
