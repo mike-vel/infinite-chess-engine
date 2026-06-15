@@ -159,7 +159,7 @@ fn is_insufficient(m: &Mat) -> bool {
         return true;
     }
 
-    // Less than 3 guards
+    // Up to 2 guards alone (3 guards are needed to force mate on the unbounded board)
     if m.guards <= 2
         && m.queens == 0
         && m.rooks == 0
@@ -189,7 +189,7 @@ fn is_insufficient(m: &Mat) -> bool {
         return true;
     }
 
-    // H+B
+    // Hawk + bishops of a single color (opposite-color pair is a win)
     if m.hawks == 1
         && (m.bishops_lb + m.bishops_db) >= 1
         && m.bishops_lb.min(m.bishops_db) <= 1
@@ -207,7 +207,26 @@ fn is_insufficient(m: &Mat) -> bool {
         return true;
     }
 
-    // AB with pieces
+    // Up to 2 hawks alone (pure leapers cannot force mate on the unbounded board)
+    if m.hawks >= 1
+        && m.hawks <= 2
+        && m.queens == 0
+        && m.rooks == 0
+        && m.knights == 0
+        && m.bishops_lb == 0
+        && m.bishops_db == 0
+        && m.chancellors == 0
+        && m.archbishops == 0
+        && m.guards == 0
+        && m.pawns == 0
+        && m.amazons == 0
+        && m.knightriders == 0
+        && m.huygens == 0
+    {
+        return true;
+    }
+
+    // AB + bishops of a single color (opposite-color pair is a win)
     if m.archbishops == 1
         && (m.bishops_lb + m.bishops_db) >= 1
         && (m.bishops_lb == 0 || m.bishops_db == 0)
@@ -224,6 +243,7 @@ fn is_insufficient(m: &Mat) -> bool {
     {
         return true;
     }
+    // AB alone, or AB with up to 2 knights
     if m.archbishops == 1
         && m.knights <= 2
         && m.queens == 0
@@ -304,6 +324,25 @@ fn is_insufficient(m: &Mat) -> bool {
         && m.pawns == 0
         && m.amazons == 0
         && m.knightriders == 0
+    {
+        return true;
+    }
+
+    // Up to 2 knightriders alone (a rider cannot pin a king to a nonexistent edge)
+    if m.knightriders >= 1
+        && m.knightriders <= 2
+        && m.queens == 0
+        && m.rooks == 0
+        && m.knights == 0
+        && m.bishops_lb == 0
+        && m.bishops_db == 0
+        && m.chancellors == 0
+        && m.archbishops == 0
+        && m.hawks == 0
+        && m.guards == 0
+        && m.pawns == 0
+        && m.amazons == 0
+        && m.huygens == 0
     {
         return true;
     }
@@ -1502,6 +1541,176 @@ mod tests {
         assert!(
             !evaluate_insufficient_material(&game),
             "K+3 Knightriders vs K is sufficient"
+        );
+    }
+
+    // [2] Two guards cannot force mate on the unbounded board (3 are needed).
+    #[test]
+    fn test_king_2guards_vs_king_insufficient() {
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Guard, PlayerColor::White),
+            (2, 0, PieceType::Guard, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            evaluate_insufficient_material(&game),
+            "K+2 Guards vs K is a draw on the unbounded board"
+        );
+    }
+
+    #[test]
+    fn test_king_3guards_vs_king_sufficient() {
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Guard, PlayerColor::White),
+            (2, 0, PieceType::Guard, PlayerColor::White),
+            (3, 0, PieceType::Guard, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            !evaluate_insufficient_material(&game),
+            "K+3 Guards vs K is sufficient on the unbounded board"
+        );
+    }
+
+    // [3] A lone archbishop (knight+bishop compound) cannot mate on the unbounded board.
+    #[test]
+    fn test_king_archbishop_vs_king_insufficient() {
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Archbishop, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            evaluate_insufficient_material(&game),
+            "K+Archbishop vs K is insufficient"
+        );
+    }
+
+    // [3] AB + two same-color bishops cannot cover both square colors -> draw.
+    #[test]
+    fn test_king_archbishop_2same_color_bishops_vs_king_insufficient() {
+        // Two same-color bishops: (1,1) and (3,1) are both even parity.
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Archbishop, PlayerColor::White),
+            (1, 1, PieceType::Bishop, PlayerColor::White),
+            (3, 1, PieceType::Bishop, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            evaluate_insufficient_material(&game),
+            "K+Archbishop+2 same-color Bishops vs K is a draw"
+        );
+    }
+
+    // [3] AB + opposite-color bishops covers both colors -> win.
+    #[test]
+    fn test_king_archbishop_opposite_bishops_vs_king_sufficient() {
+        // Opposite-color bishops: (1,1) even parity, (1,2) odd parity.
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Archbishop, PlayerColor::White),
+            (1, 1, PieceType::Bishop, PlayerColor::White),
+            (1, 2, PieceType::Bishop, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            !evaluate_insufficient_material(&game),
+            "K+Archbishop+opposite-color Bishops vs K is sufficient"
+        );
+    }
+
+    #[test]
+    fn test_king_archbishop_1knight_vs_king_insufficient() {
+        // The exact spec draw {AB:1, N:1} is still insufficient.
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Archbishop, PlayerColor::White),
+            (2, 0, PieceType::Knight, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            evaluate_insufficient_material(&game),
+            "K+Archbishop+1 Knight vs K is insufficient"
+        );
+    }
+
+    // [4] Hawk + two bishops is not a win (a single hawk is too weak).
+    #[test]
+    fn test_king_hawk_2same_color_bishops_vs_king_insufficient() {
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Hawk, PlayerColor::White),
+            (1, 1, PieceType::Bishop, PlayerColor::White),
+            (3, 1, PieceType::Bishop, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            evaluate_insufficient_material(&game),
+            "K+Hawk+2 same-color Bishops vs K is a draw"
+        );
+    }
+
+    #[test]
+    fn test_king_hawk_opposite_bishops_vs_king_insufficient() {
+        // Opposite-color bishops: (1,1) even parity, (1,2) odd parity.
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Hawk, PlayerColor::White),
+            (1, 1, PieceType::Bishop, PlayerColor::White),
+            (1, 2, PieceType::Bishop, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            evaluate_insufficient_material(&game),
+            "K+Hawk+opposite-color Bishops vs K is a draw"
+        );
+    }
+
+    #[test]
+    fn test_king_hawk_1bishop_vs_king_insufficient() {
+        // The exact spec draw {HAWK:1, B:[1,0]} is still insufficient.
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Hawk, PlayerColor::White),
+            (1, 1, PieceType::Bishop, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            evaluate_insufficient_material(&game),
+            "K+Hawk+1 Bishop vs K is insufficient"
+        );
+    }
+
+    // [13] Two lone hawks cannot force mate.
+    #[test]
+    fn test_king_2hawks_vs_king_insufficient() {
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Hawk, PlayerColor::White),
+            (2, 0, PieceType::Hawk, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            evaluate_insufficient_material(&game),
+            "K+2 Hawks vs K is a draw"
+        );
+    }
+
+    // [14] Two lone knightriders cannot force mate.
+    #[test]
+    fn test_king_2knightriders_vs_king_insufficient() {
+        let game = create_test_game_with_pieces(&[
+            (0, 0, PieceType::King, PlayerColor::White),
+            (1, 0, PieceType::Knightrider, PlayerColor::White),
+            (2, 0, PieceType::Knightrider, PlayerColor::White),
+            (5, 5, PieceType::King, PlayerColor::Black),
+        ]);
+        assert!(
+            evaluate_insufficient_material(&game),
+            "K+2 Knightriders vs K is a draw"
         );
     }
 }
