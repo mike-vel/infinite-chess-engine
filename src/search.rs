@@ -5020,6 +5020,14 @@ fn quiescence(
 
         legal_moves += 1;
 
+        // Maintain the per-node move link so deeper qsearch nodes read the right
+        // previous move: prev_sq (the recapture-exception square) and the
+        // correction-history previous-move index both key off these at ply - 1.
+        let prev_entry_backup = searcher.prev_move_stack[ply];
+        let move_history_backup = searcher.move_history[ply].take();
+        searcher.prev_move_stack[ply] = (hash_move_from(m), hash_move_dest(m));
+        searcher.move_history[ply] = Some(*m);
+
         let score = -quiescence(
             searcher,
             game,
@@ -5031,6 +5039,9 @@ fn quiescence(
         );
 
         game.undo_move(m, undo);
+
+        searcher.prev_move_stack[ply] = prev_entry_backup;
+        searcher.move_history[ply] = move_history_backup;
 
         if searcher.hot.stopped {
             std::mem::swap(&mut tactical_moves, &mut searcher.move_buffers[ply]);
