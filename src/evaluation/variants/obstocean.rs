@@ -1,4 +1,4 @@
-use crate::board::{PieceType, PlayerColor};
+use crate::board::{Coordinate, PieceType, PlayerColor};
 use crate::evaluation::base;
 use crate::game::GameState;
 
@@ -401,7 +401,7 @@ fn piece_pawn_escort(px: i64, py: i64, my_pawns: &[(i64, i64)], promo_rank: i64,
 
 /// Bishop escort + diagonal cover bonus.
 #[inline]
-fn bishop_pawn_support(bx: i64, by: i64, color: PlayerColor, my_pawns: &[(i64, i64)], promo_rank: i64) -> i32 {
+fn bishop_pawn_support(game: &GameState, bx: i64, by: i64, color: PlayerColor, my_pawns: &[(i64, i64)], promo_rank: i64) -> i32 {
     let forward: i64 = if color == PlayerColor::White { 1 } else { -1 };
     let is_white = color == PlayerColor::White;
     let mut bonus = 0i32;
@@ -419,7 +419,16 @@ fn bishop_pawn_support(bx: i64, by: i64, color: PlayerColor, my_pawns: &[(i64, i
         let fwd_y = py + forward;
         let dx = (bx - fwd_x).abs();
         let dy = (by - fwd_y).abs();
-        if dx == dy && dx > 0 {
+        // Real cover requires an unobstructed diagonal; on the obstacle-dense
+        // board most nominal diagonals are blocked.
+        if dx == dy
+            && dx > 0
+            && base::is_clear_line_between_fast(
+                &game.spatial_indices,
+                &Coordinate::new(bx, by),
+                &Coordinate::new(fwd_x, fwd_y),
+            )
+        {
             bonus += BISHOP_DIAG_COVER;
         }
     }
@@ -664,7 +673,7 @@ fn evaluate_inner(game: &GameState) -> i32 {
                                         game, x, y, p.color(),
                                         white_royals, black_royals,
                                         phase, white_pawns, black_pawns,
-                                    ) + bishop_pawn_support(x, y, p.color(), my_pawns, promo_rank)
+                                    ) + bishop_pawn_support(game, x, y, p.color(), my_pawns, promo_rank)
                                 }
                                 PieceType::Rook | PieceType::Chancellor | PieceType::Amazon => {
                                     base::evaluate_rook(
@@ -833,8 +842,8 @@ mod tests {
     fn test_bishop_escorts_pawn() {
         let mut game = create_obstocean_game_from_icn("w (8;q|1;q) K5,1|k5,8");
         game.white_promo_rank = 8;
-        let close = bishop_pawn_support(0, 5, PlayerColor::White, &[(0, 6)], 8);
-        let far = bishop_pawn_support(3, 3, PlayerColor::White, &[(0, 6)], 8);
+        let close = bishop_pawn_support(&game, 0, 5, PlayerColor::White, &[(0, 6)], 8);
+        let far = bishop_pawn_support(&game, 3, 3, PlayerColor::White, &[(0, 6)], 8);
         assert!(close > far, "Closer bishop should get more escort bonus");
         assert!(close > 0, "Bishop near outside pawn should get bonus");
     }
