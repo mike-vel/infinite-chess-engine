@@ -25,6 +25,8 @@ use game::GameState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
     Classical,
+    Classical2,
+    Classical3,
     ConfinedClassical,
     ClassicalPlus,
     CoaIP,
@@ -57,6 +59,14 @@ impl Variant {
         match self {
             Variant::Classical => {
                 "w 0/100 1 (8|1) P1,2+|P2,2+|P3,2+|P4,2+|P5,2+|P6,2+|P7,2+|P8,2+|p1,7+|p2,7+|p3,7+|p4,7+|p5,7+|p6,7+|p7,7+|p8,7+|R1,1+|R8,1+|r1,8+|r8,8+|N2,1|N7,1|n2,8|n7,8|B3,1|B6,1|b3,8|b6,8|Q4,1|q4,8|K5,1+|k5,8+"
+            }
+            Variant::Classical2 => {
+                // --- Previous Iteration of Classical2 here ---
+                "w 0/100 1 (8|1) k5,8+|q4,8|n7,8|n2,8|r8,8+|r1,8+|b6,8|b3,8|p15,10+|p13,10+|p14,9+|p-4,10+|p-6,10+|p-5,9+|p8,7+|p7,7+|p6,7+|p5,7+|p4,7+|p3,7+|p2,7+|p1,7+|K5,1+|Q4,1|N7,1|N2,1|R8,1+|R1,1+|B6,1|B3,1|P15,-1+|P13,-1+|P14,0+|P-4,-1+|P-6,-1+|P-5,0+|P8,2+|P7,2+|P6,2+|P5,2+|P4,2+|P3,2+|P2,2+|P1,2+|N0,2|N9,2|n9,7|n0,7|p3,11+|p6,11+|P6,-2+|P3,-2+|P4,-2+|P5,-2+|p4,11+|p5,11+"
+            }
+            Variant::Classical3 => {
+                // --- Next Iteration of Classical2 here ---
+                "w 0/100 1 (8|1) k5,8+|q4,8|n7,8|n2,8|r8,8+|r1,8+|b6,8|b3,8|p15,10+|p13,10+|p14,9+|p-4,10+|p-6,10+|p-5,9+|p8,7+|p7,7+|p6,7+|p5,7+|p4,7+|p3,7+|p2,7+|p1,7+|p3,11+|p6,11+|p4,11+|p5,11+|K5,1+|Q4,1|N7,1|N2,1|R8,1+|R1,1+|B6,1|B3,1|P15,-1+|P13,-1+|P14,0+|P-4,-1+|P-6,-1+|P-5,0+|P8,2+|P7,2+|P6,2+|P5,2+|P4,2+|P3,2+|P2,2+|P1,2+|P6,-2+|P3,-2+|P4,-2+|P5,-2+"
             }
             Variant::ConfinedClassical => {
                 "w 0/100 1 (8|1) -1000000000000000,1000000000000009,-1000000000000000,1000000000000009 P1,2+|P2,2+|P3,2+|P4,2+|P5,2+|P6,2+|P7,2+|P8,2+|p1,7+|p2,7+|p3,7+|p4,7+|p5,7+|p6,7+|p7,7+|p8,7+|R1,1+|R8,1+|r1,8+|r8,8+|N2,1|N7,1|n2,8|n7,8|B3,1|B6,1|b3,8|b6,8|Q4,1|q4,8|K5,1+|k5,8+|ob0,0|ob0,1|ob0,2|ob0,7|ob0,8|ob0,9|ob9,0|ob9,1|ob9,2|ob9,7|ob9,8|ob9,9|ob1,0|ob2,0|ob3,0|ob4,0|ob5,0|ob6,0|ob7,0|ob8,0|ob1,9|ob2,9|ob3,9|ob4,9|ob5,9|ob6,9|ob7,9|ob8,9"
@@ -130,6 +140,8 @@ impl Variant {
     pub fn to_str(&self) -> &'static str {
         match self {
             Variant::Classical => "Classical",
+            Variant::Classical2 => "Classical2",
+            Variant::Classical3 => "Classical3",
             Variant::ConfinedClassical => "Confined_Classical",
             Variant::ClassicalPlus => "Classical_Plus",
             Variant::CoaIP => "CoaIP",
@@ -162,6 +174,8 @@ impl Variant {
         let normalized = s.to_lowercase().replace(' ', "_");
         match normalized.as_str() {
             "classical" => Some(Variant::Classical),
+            "classical2" => Some(Variant::Classical2),
+            "classical3" => Some(Variant::Classical3),
             "confined_classical" => Some(Variant::ConfinedClassical),
             "classical_plus" | "classical+" => Some(Variant::ClassicalPlus),
             "coaip" | "chess_on_an_infinite_plane" => Some(Variant::CoaIP),
@@ -1077,6 +1091,8 @@ mod tests {
     fn all_variants() -> Vec<Variant> {
         vec![
             Variant::Classical,
+            Variant::Classical2,
+            Variant::Classical3,
             Variant::ConfinedClassical,
             Variant::ClassicalPlus,
             Variant::CoaIP,

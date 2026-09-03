@@ -83,7 +83,7 @@ enum Commands {
         /// Variants to test (comma-separated list)
         #[arg(
             long,
-            default_value = "Classical,Confined_Classical,Classical_Plus,Core,CoaIP,CoaIP_HO,CoaIP_RO,CoaIP_NO,Palace,Pawndard,Standarch,Space_Classic,Space,Knightline,Scattered_Leapers"
+            default_value = "Classical,Classical2,Classical3,Confined_Classical,Classical_Plus,Core,CoaIP,CoaIP_HO,CoaIP_RO,CoaIP_NO,Palace,Pawndard,Standarch,Space_Classic,Space,Knightline,Scattered_Leapers"
         )]
         variants: String,
 
@@ -3082,7 +3082,7 @@ fn main() {
 
             // Compared against the parsed args to tell an explicit flag from a default.
             const DEFAULT_TC_STR: &str = "10+0.1";
-            const DEFAULT_VARIANTS_STR: &str = "Classical,Confined_Classical,Classical_Plus,Core,CoaIP,CoaIP_HO,CoaIP_RO,CoaIP_NO,Palace,Pawndard,Standarch,Space_Classic,Space,Knightline,Scattered_Leapers";
+            const DEFAULT_VARIANTS_STR: &str = "Classical,Classical2,Classical3,Confined_Classical,Classical_Plus,Core,CoaIP,CoaIP_HO,CoaIP_RO,CoaIP_NO,Palace,Pawndard,Standarch,Space_Classic,Space,Knightline,Scattered_Leapers";
 
             // Load resume state if --resume was provided
             let resume_state_opt: Option<ResumeState> = resume.as_deref().and_then(|path| {
@@ -3245,6 +3245,8 @@ fn main() {
                         let known = matches!(
                             name_lower.as_str(),
                             "classical"
+                                | "classical2"
+                                | "classical3"
                                 | "confined_classical"
                                 | "classical_plus"
                                 | "coaip"
