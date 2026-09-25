@@ -21,7 +21,7 @@ use crate::search::params::{
     mg_outpost_bonus, passed_enemy_king_dist, passed_friendly_king_dist,
     passed_pawn_adv_bonus, pawn, pawn_enemy_king_dist, pawn_far_from_promo_max_penalty,
     pawn_friendly_king_dist, pawn_full_value_threshold, pawn_past_promo_penalty,
-    piece_cloud_cheb_max_excess, piece_cloud_cheb_radius,
+    piece_cloud_cheb_max_excess, piece_cloud_cheb_radius, leaper_cloud_radius, rider_cloud_radius,
     queen, queen_open_file_bonus, queen_semi_open_file_bonus, rook, rook_open_file_bonus,
     rook_semi_open_file_bonus, rose, slider_axis_wiggle, slider_net_bonus, slider_threat_cap,
     pin_opportunity_cap, pin_opportunity_cost, slider_threat_div, zebra,
@@ -273,11 +273,11 @@ pub const DEFAULT_EVAL_BISHOP: i32 = 450;
 pub const DEFAULT_EVAL_ROOK: i32 = 618;
 pub const DEFAULT_EVAL_GUARD: i32 = 232;
 pub const DEFAULT_EVAL_CENTAUR: i32 = 640;
-pub const DEFAULT_EVAL_QUEEN: i32 = 1380;
-pub const DEFAULT_EVAL_CAMEL: i32 = 195;
+pub const DEFAULT_EVAL_QUEEN: i32 = 1518;
+pub const DEFAULT_EVAL_CAMEL: i32 = 175;
 pub const DEFAULT_EVAL_GIRAFFE: i32 = 165;
 pub const DEFAULT_EVAL_ZEBRA: i32 = 180;
-pub const DEFAULT_EVAL_KNIGHTRIDER: i32 = 800;
+pub const DEFAULT_EVAL_KNIGHTRIDER: i32 = 900;
 pub const DEFAULT_EVAL_HAWK: i32 = 540;
 pub const DEFAULT_EVAL_ARCHBISHOP: i32 = 1080;
 pub const DEFAULT_EVAL_ROSE: i32 = 997;
@@ -321,12 +321,15 @@ pub const DEFAULT_EVAL_FAR_QUEEN_PENALTY: i32 = 5;
 pub const FAR_SLIDER_PENALTY_VALUE_DIV: i32 = 8;
 pub const DEFAULT_EVAL_FAR_ROOK_PENALTY: i32 = 7;
 pub const DEFAULT_EVAL_PIECE_CLOUD_CHEB_RADIUS: i32 = 16;
+/// Cloud radius beyond which a leaper counts as out of play: its reach is one jump.
+pub const DEFAULT_EVAL_LEAPER_CLOUD_RADIUS: i32 = 8;
+/// Cloud radius beyond which a rider (knightrider, rose, huygen) counts as out of play.
+pub const DEFAULT_EVAL_RIDER_CLOUD_RADIUS: i32 = 16;
 pub const DEFAULT_EVAL_SLIDER_AXIS_WIGGLE: i32 = 5;
 pub const DEFAULT_EVAL_PIECE_CLOUD_CHEB_MAX_EXCESS: i32 = 64;
 pub const DEFAULT_EVAL_CLOUD_PENALTY_PER_100_VALUE: i32 = 2;
 pub const DEFAULT_EVAL_CLOUD_PENALTY_MAX_PCT: i32 = 50;
 pub const DEFAULT_EVAL_CLOUD_CENTER_MAX_SKEW_DIST: i32 = 16;
-pub const DEFAULT_EVAL_QUEEN_IDEAL_LINE_DIST: i32 = 4;
 pub const DEFAULT_EVAL_LEAPER_TROPISM_DIVISOR: i32 = 400;
 pub const DEFAULT_EVAL_CHANCELLOR_ROOK_SCALE: i32 = 90;
 pub const DEFAULT_EVAL_ARCHBISHOP_BISHOP_SCALE: i32 = 90;
@@ -430,7 +433,7 @@ pub const DEFAULT_EVAL_PASSED_PAWN_ADV_BONUS_1_1_5: i32 = 238;
 /// against the variants: paired kings start 1 apart, maze kings 26.
 const SHELTER_SHARE_DIST: i64 = 2;
 
-fn king_rays_from_indices(
+pub(crate) fn king_rays_from_indices(
     indices: &crate::moves::SpatialIndices,
     kx: i64,
     ky: i64,
@@ -675,8 +678,6 @@ pub fn get_piece_phase(piece_type: PieceType) -> i32 {
 pub const DEFAULT_EVAL_MG_BEHIND_KING_BONUS: i32 = 45;
 pub const DEFAULT_EVAL_EG_BEHIND_KING_BONUS: i32 = 59; // More important to be behind king in EG
 
-pub const DEFAULT_EVAL_MG_KING_TROPISM_BONUS: i32 = 10;
-pub const DEFAULT_EVAL_EG_KING_TROPISM_BONUS: i32 = 6; // King centralized -> piece proximity matters more
 
 // Shelter / Ring
 pub const DEFAULT_EVAL_MG_KING_RING_MISSING_PENALTY: i32 = 52;
@@ -693,7 +694,7 @@ pub const DEFAULT_EVAL_EG_KING_OPEN_FILE_PENALTY: i32 = 0;
 
 // Structural
 pub const DEFAULT_EVAL_MG_CONNECTED_PAWN_BONUS: i32 = 0;
-pub const DEFAULT_EVAL_EG_CONNECTED_PAWN_BONUS: i32 = 15; // Chains critical in EG
+pub const DEFAULT_EVAL_EG_CONNECTED_PAWN_BONUS: i32 = 30; // Chains critical in EG
 
 pub const DEFAULT_EVAL_MG_KING_DEFENDER_BONUS: i32 = 18;
 pub const DEFAULT_EVAL_EG_KING_DEFENDER_BONUS: i32 = 0; // Less need for defenders
@@ -1108,11 +1109,13 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
                                 if pt == PieceType::Pawn {
                                     pawn_min_y = pawn_min_y.min(y);
                                     pawn_max_y = pawn_max_y.max(y);
+                                    // With no promotion rank (sentinel) every pawn still counts
+                                    // for structure and shelter; only passer terms skip it.
                                     if is_white {
-                                        if y < w_promo {
+                                        if y < w_promo || w_promo == i64::MIN {
                                             white_pawns.push((x, y));
                                         }
-                                    } else if y > b_promo {
+                                    } else if y > b_promo || b_promo == i64::MAX {
                                         black_pawns.push((x, y));
                                     }
                                 } else if !pt.is_neutral_type() {
@@ -1867,7 +1870,6 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
                                 slider_geometry_ctx,
                                 leaper_geometry_ctx,
                                 cloud_avg_spread,
-                                cloud_count: cloud_count.min(255) as i32,
                                 counterplay: [white_cp, black_cp],
                                 bishops: [white_bishops, black_bishops],
                                 bishop_pair: [pair(white_bishop_colors), pair(black_bishop_colors)],
@@ -1902,7 +1904,6 @@ pub fn evaluate_inner_traced<T: EvaluationTracer>(game: &GameState, tracer: &mut
                                 ],
                                 king_dist,
                                 king_cloud_dist: [cloud_dist(white_king), cloud_dist(black_king)],
-                                halfmove_clock: game.halfmove_clock.min(255) as i32,
                                 ring_covered: [
                                     i32::from(w_king_ring_covered),
                                     i32::from(b_king_ring_covered),
@@ -2282,11 +2283,19 @@ fn evaluate_pieces_processed<T: EvaluationTracer>(
             let dy = (2 * y - center.y).abs() / 2;
             let cheb = dx.max(dy);
 
-            if pt != PieceType::Pawn && !pt.is_royal() && cheb > piece_cloud_cheb_radius() as i64 {
-                let is_ortho = pt == PieceType::Rook || pt == PieceType::Chancellor;
-                let is_diag = pt == PieceType::Bishop || pt == PieceType::Archbishop;
-                let is_queen = pt == PieceType::Queen || pt == PieceType::Amazon;
-
+            let is_ortho = pt == PieceType::Rook || pt == PieceType::Chancellor;
+            let is_diag = pt == PieceType::Bishop || pt == PieceType::Archbishop;
+            let is_queen = pt == PieceType::Queen || pt == PieceType::Amazon;
+            // A leaper's reach is one jump, so it must stand much closer than a slider or
+            // rider to take part.
+            let radius = if is_ortho || is_diag || is_queen {
+                piece_cloud_cheb_radius() as i64
+            } else if matches!(pt, PieceType::Knightrider | PieceType::Rose | PieceType::Huygen) {
+                rider_cloud_radius() as i64
+            } else {
+                leaper_cloud_radius() as i64
+            };
+            if pt != PieceType::Pawn && !pt.is_royal() && cheb > radius {
                 let mult = taper(mg_far_slider_penalty_mult(), eg_far_slider_penalty_mult());
 
                 if is_ortho || is_diag || is_queen {
@@ -2312,7 +2321,7 @@ fn evaluate_pieces_processed<T: EvaluationTracer>(
                 } else {
                     // Leapers/Others: penalized by distance (Chebyshev)
                     // We are only in this block if cheb > RADIUS, so dist_to_radius > 0
-                    let dist_to_radius = cheb - piece_cloud_cheb_radius() as i64;
+                    let dist_to_radius = cheb - radius;
                     let excess = dist_to_radius.min(piece_cloud_cheb_max_excess() as i64) as i32;
                     piece_score -= cloud_penalty(excess, piece_val, mult);
                 }
@@ -3355,7 +3364,7 @@ fn safe_check_units(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn evaluate_king_shelter(
+pub(crate) fn evaluate_king_shelter(
     game: &GameState,
     king: &Coordinate,
     color: PlayerColor,
@@ -3655,10 +3664,10 @@ pub fn evaluate_pawn_structure(game: &GameState) -> i32 {
                             let y = cy * 8 + (idx / 8) as i64;
                             if piece.piece_type() == PieceType::Pawn {
                                 if piece.color() == PlayerColor::White {
-                                    if y < w_promo {
+                                    if y < w_promo || w_promo == i64::MIN {
                                         wp.push((x, y));
                                     }
-                                } else if y > b_promo {
+                                } else if y > b_promo || b_promo == i64::MAX {
                                     bp.push((x, y));
                                 }
                             }
@@ -3718,6 +3727,16 @@ pub fn evaluate_pawn_structure_traced<T: EvaluationTracer>(
     // cached; taper and passed-pawn scoring happen live so phase, king positions
     // and blockers are always current.
     let idx = (pawn_hash as usize) & (PAWN_CACHE_SIZE - 1);
+    // Cached terms read eval params, so a tuning run's param change must drop them.
+    #[cfg(any(feature = "param_tuning", feature = "eval_tuning"))]
+    {
+        thread_local!(static SEEN_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) });
+        let generation =
+            crate::search::params::EVAL_PARAMS_GEN.load(std::sync::atomic::Ordering::Acquire);
+        if SEEN_GEN.with(|g| g.replace(generation)) != generation {
+            clear_pawn_cache();
+        }
+    }
     // Scored inside the borrow: cloning the entry copied two passer lists per hit,
     // and score_passed_pawns never touches this cache.
     let hit = PAWN_CACHE.with(|cache| {
@@ -3930,7 +3949,7 @@ fn compute_pawn_core<T: EvaluationTracer>(
         // Relative rank 0 to 5 (assuming 6 ranks is "near promotion")
         // For an infinite board, we'll anchor to the promotion rank.
         let w_promo = game.white_promo_rank;
-        let dist_to_promo = (w_promo - wy).max(1);
+        let dist_to_promo = w_promo.saturating_sub(wy).max(1);
         let rel_rank = (6 - dist_to_promo).clamp(0, 5) as usize;
 
         for dx in -1..=1 {
@@ -3949,6 +3968,11 @@ fn compute_pawn_core<T: EvaluationTracer>(
             }
         }
 
+        // A pawn that cannot promote is never a passer or a candidate.
+        if w_promo == i64::MIN {
+            is_passed = false;
+            stoppers = 0;
+        }
         if is_passed {
             w_passed.push((wx, wy));
         } else {
@@ -4037,7 +4061,7 @@ fn compute_pawn_core<T: EvaluationTracer>(
         }
 
         let b_promo = game.black_promo_rank;
-        let dist_to_promo = (by - b_promo).max(1);
+        let dist_to_promo = by.saturating_sub(b_promo).max(1);
         let rel_rank = (6 - dist_to_promo).clamp(0, 5) as usize;
 
         for dx in -1..=1 {
@@ -4054,6 +4078,10 @@ fn compute_pawn_core<T: EvaluationTracer>(
             }
         }
 
+        if b_promo == i64::MAX {
+            is_passed = false;
+            stoppers = 0;
+        }
         if is_passed {
             b_passed.push((bx, by));
         } else {
@@ -4212,7 +4240,7 @@ fn score_passed_pawns<T: EvaluationTracer>(
 
     for &(wx, wy) in w_passed {
         let w_promo = game.white_promo_rank;
-        let dist_to_promo = (w_promo - wy).max(1);
+        let dist_to_promo = w_promo.saturating_sub(wy).max(1);
         let rel_rank = (6 - dist_to_promo).clamp(0, 5) as usize;
 
         // 1. Can Advance
@@ -4227,13 +4255,13 @@ fn score_passed_pawns<T: EvaluationTracer>(
         let mut friendly_king_bonus = 0;
         let mut enemy_king_penalty = 0;
         for wk in white_royals {
-            let d = (wx - wk.x).abs().max((wy - wk.y).abs()) as usize;
-            let b = passed_friendly_king_dist()[rel_rank] * (7 - d.min(7)) as i32;
+            let d = (wx - wk.x).abs().max((wy - wk.y).abs()).min(7);
+            let b = passed_friendly_king_dist()[rel_rank] * (7 - d) as i32;
             friendly_king_bonus = friendly_king_bonus.max(b);
         }
         for bk in black_royals {
-            let d = (wx - bk.x).abs().max((wy - bk.y).abs()) as usize;
-            let p = passed_enemy_king_dist()[rel_rank] * (7 - d.min(7)) as i32;
+            let d = (wx - bk.x).abs().max((wy - bk.y).abs()).min(7);
+            let p = passed_enemy_king_dist()[rel_rank] * (7 - d) as i32;
             enemy_king_penalty = enemy_king_penalty.max(p);
         }
 
@@ -4295,7 +4323,7 @@ fn score_passed_pawns<T: EvaluationTracer>(
 
     for &(bx, by) in b_passed {
         let b_promo = game.black_promo_rank;
-        let dist_to_promo = (by - b_promo).max(1);
+        let dist_to_promo = by.saturating_sub(b_promo).max(1);
         let rel_rank = (6 - dist_to_promo).clamp(0, 5) as usize;
 
         let next_y = by - 1;
@@ -4306,13 +4334,13 @@ fn score_passed_pawns<T: EvaluationTracer>(
         let mut friendly_king_bonus = 0;
         let mut enemy_king_penalty = 0;
         for bk in black_royals {
-            let d = (bx - bk.x).abs().max((by - bk.y).abs()) as usize;
-            let b = passed_friendly_king_dist()[rel_rank] * (7 - d.min(7)) as i32;
+            let d = (bx - bk.x).abs().max((by - bk.y).abs()).min(7);
+            let b = passed_friendly_king_dist()[rel_rank] * (7 - d) as i32;
             friendly_king_bonus = friendly_king_bonus.max(b);
         }
         for wk in white_royals {
-            let d = (bx - wk.x).abs().max((by - wk.y).abs()) as usize;
-            let p = passed_enemy_king_dist()[rel_rank] * (7 - d.min(7)) as i32;
+            let d = (bx - wk.x).abs().max((by - wk.y).abs()).min(7);
+            let p = passed_enemy_king_dist()[rel_rank] * (7 - d) as i32;
             enemy_king_penalty = enemy_king_penalty.max(p);
         }
 
@@ -4578,7 +4606,7 @@ pub fn evaluate_king_positioning_traced<T: EvaluationTracer>(
     // Find the closes distance from each pawn to the kings.
     for &(wx, wy) in white_pawns {
         let w_promo = game.white_promo_rank;
-        let dist_to_promo = (w_promo - wy).max(1);
+        let dist_to_promo = w_promo.saturating_sub(wy).max(1);
         let rel_rank = (6 - dist_to_promo).clamp(0, 5) as usize;
         let mut min_d = 255; // Chebyshev distance
 
@@ -4643,7 +4671,7 @@ pub fn evaluate_king_positioning_traced<T: EvaluationTracer>(
     }
     for &(bx, by) in black_pawns {
         let b_promo = game.black_promo_rank;
-        let dist_to_promo = (by - b_promo).max(1);
+        let dist_to_promo = by.saturating_sub(b_promo).max(1);
         let rel_rank = (6 - dist_to_promo).clamp(0, 5) as usize;
         let mut min_d = 255; // Chebyshev distance
 

@@ -9,6 +9,7 @@
 
 use apeiron::Variant;
 use apeiron::board::PlayerColor;
+use apeiron::eval_net::variant_features::{VariantFeatures, VariantLayout};
 use apeiron::eval_net::{FeatureCollector, NUM_FEATURES, feature_vector, schema_hash};
 use apeiron::evaluation::{base, eval_kind::EvalKind, insufficient_material};
 use apeiron::game::GameState;
@@ -25,8 +26,26 @@ use std::time::Instant;
 
 const MAGIC: &[u8; 8] = b"AEVDAT01";
 const VERSION: u32 = 1;
-/// Feature vector + static/teacher cp + flags + game id + ply, padded to 216.
-const RECORD_SIZE: usize = NUM_FEATURES * 2 + 18;
+/// The exported layout's (input count, schema hash): the generic vector, or a
+/// specialized evaluator's own layout under `--eval-kind`.
+static LAYOUT: std::sync::OnceLock<(usize, u64)> = std::sync::OnceLock::new();
+static GENERIC: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Feature vector + static/teacher cp + flags + game id + ply.
+fn record_size() -> usize {
+    LAYOUT.get().unwrap().0 * 2 + 18
+}
+
+/// A specialized evaluator's layout, or None for the generic evaluator.
+fn variant_layout(kind: EvalKind) -> Option<&'static VariantLayout> {
+    use apeiron::evaluation::variants;
+    match kind {
+        EvalKind::Chess => Some(&variants::chess::NET_LAYOUT),
+        EvalKind::Obstocean => Some(&variants::obstocean::NET_LAYOUT),
+        EvalKind::PawnHorde => Some(&variants::pawn_horde::NET_LAYOUT),
+        EvalKind::Generic => None,
+    }
+}
 const HEADER_SIZE: u64 = 36;
 const MATE_FLOOR: i32 = apeiron::search::MATE_SCORE;
 
@@ -76,7 +95,7 @@ struct Acc {
 }
 
 /// FNV-style fold over the leading feature columns and the static eval; must
-/// match `keys()` in `nnue/join_labels.py`.
+/// match `keys()` in `evalnet/join_labels.py`.
 fn record_key(x: &[i16], n: usize, static_white: i16) -> u64 {
     let prime = 0x0000_0100_0000_01B3u64;
     let mut h = 0xCBF2_9CE4_8422_2325u64;
@@ -163,7 +182,7 @@ struct Cli {
     /// Skip positions with |teacher| above this (cp).
     #[arg(long, default_value_t = 2000)]
     max_abs_cp: i32,
-    #[arg(long, default_value = "nnue/eval_net_data.bin")]
+    #[arg(long, default_value = "evalnet/eval_net_data.bin")]
     out: PathBuf,
     /// Re-label every kept position with a fixed-depth search of the CURRENT engine
     /// instead of the recorded eval (0 = keep recorded). Records are then tagged as
@@ -214,12 +233,15 @@ struct Cli {
     #[arg(long = "param")]
     params: Vec<String>,
     /// Which evaluator's positions to export: generic, chess, obstocean or pawn_horde.
-    /// A specialized evaluator's score is the static eval; the inputs stay the base
-    /// HCE's feature vector for the same position.
+    /// A specialized evaluator's score is the static eval and its own layout the inputs.
     #[arg(long, default_value = "generic")]
     eval_kind: String,
+    /// With `--eval-kind`, write the generic feature vector instead of the evaluator's
+    /// own layout, to measure which generic inputs that evaluator's net would use.
+    #[arg(long)]
+    generic_features: bool,
     /// Leading feature columns the key covers (the older layout's width).
-    #[arg(long, default_value_t = 129)]
+    #[arg(long, default_value_t = apeiron::eval_net::features::NUM_FEATURES)]
     key_columns: usize,
     /// Hard time cap per re-label search in ms.
     #[arg(long, default_value_t = 3000)]
@@ -611,12 +633,26 @@ fn consider(
             source = SOURCE_TEXEL;
         }
         let mut fc = FeatureCollector::default();
-        let base_stm = base::evaluate_inner_traced(&pos, &mut fc);
+        let mut vf = VariantFeatures::default();
         let stm_score = match pos.eval_kind {
-            EvalKind::Chess => apeiron::evaluation::variants::chess::evaluate(&pos),
-            EvalKind::Obstocean => apeiron::evaluation::variants::obstocean::evaluate(&pos),
-            EvalKind::PawnHorde => apeiron::evaluation::variants::pawn_horde::evaluate(&pos),
-            EvalKind::Generic => base_stm,
+            EvalKind::Chess => apeiron::evaluation::variants::chess::evaluate_traced(&pos, &mut vf),
+            EvalKind::Obstocean => {
+                apeiron::evaluation::variants::obstocean::evaluate_traced(&pos, &mut vf)
+            }
+            EvalKind::PawnHorde => {
+                apeiron::evaluation::variants::pawn_horde::evaluate_traced(&pos, &mut vf)
+            }
+            EvalKind::Generic => base::evaluate_inner_traced(&pos, &mut fc),
+        };
+        let own = variant_layout(pos.eval_kind).filter(|_| !GENERIC.get().copied().unwrap_or(false));
+        let (x, phase): (Vec<i16>, i32) = match own {
+            Some(l) => (vf.x[..l.len()].to_vec(), vf.phase),
+            None => {
+                if pos.eval_kind != EvalKind::Generic {
+                    base::evaluate_inner_traced(&pos, &mut fc);
+                }
+                (feature_vector(&pos, &fc).to_vec(), fc.inputs.phase)
+            }
         };
         let static_white = if pos.turn == PlayerColor::Black {
             -stm_score
@@ -625,14 +661,13 @@ fn consider(
         };
         if (teacher - static_white).abs() <= c.quiet_tolerance {
             let shard = &seen[(pos.hash % seen.len() as u64) as usize];
-            let x = feature_vector(&pos, &fc);
             let keep = c.keep_keys.is_none_or(|k| {
                 let st = static_white.clamp(-20000, 20000) as i16;
                 k.contains(&record_key(&x, c.key_columns, st))
             }) && c.keep_hashes.is_none_or(|k| k.contains(&pos.hash));
             let fresh = keep && shard.lock().unwrap().insert(pos.hash);
             if fresh {
-                for f in x {
+                for f in &x {
                     out.extend_from_slice(&f.to_le_bytes());
                 }
                 out.extend_from_slice(&(static_white.clamp(-20000, 20000) as i16).to_le_bytes());
@@ -647,7 +682,7 @@ fn consider(
                 out.push(pos.turn as u8);
                 out.push(vid);
                 out.push(source);
-                out.push(fc.inputs.phase.clamp(0, 255) as u8);
+                out.push(phase.clamp(0, 255) as u8);
                 out.push(0);
                 out.extend_from_slice(&game_id.to_le_bytes());
                 out.extend_from_slice(&(ply.min(65535) as u16).to_le_bytes());
@@ -1029,6 +1064,9 @@ fn checkpoint(
 ) {
     let mut w = writer.lock().unwrap();
     w.flush().unwrap();
+    if let Some(h) = HASH_OUT.get() {
+        h.lock().unwrap().flush().unwrap();
+    }
     let kept = stats.kept.load(Ordering::Relaxed);
     let f = w.get_mut();
     f.seek(SeekFrom::Start(HEADER_SIZE - 8)).unwrap();
@@ -1046,9 +1084,10 @@ fn new_output(path: &PathBuf) -> File {
     let mut f = File::create(path).unwrap();
     f.write_all(MAGIC).unwrap();
     f.write_all(&VERSION.to_le_bytes()).unwrap();
-    f.write_all(&(NUM_FEATURES as u32).to_le_bytes()).unwrap();
-    f.write_all(&schema_hash().to_le_bytes()).unwrap();
-    f.write_all(&(RECORD_SIZE as u32).to_le_bytes()).unwrap();
+    let (n, schema) = *LAYOUT.get().unwrap();
+    f.write_all(&(n as u32).to_le_bytes()).unwrap();
+    f.write_all(&schema.to_le_bytes()).unwrap();
+    f.write_all(&(record_size() as u32).to_le_bytes()).unwrap();
     f.write_all(&0u64.to_le_bytes()).unwrap();
     assert_eq!(f.stream_position().unwrap(), HEADER_SIZE);
     f
@@ -1072,6 +1111,11 @@ fn group_by_variant(games: Vec<Game>) -> Vec<Vec<Game>> {
 
 fn main() {
     let cli = Cli::parse();
+    let layout = variant_layout(target_kind(&cli.eval_kind))
+        .filter(|_| !cli.generic_features)
+        .map_or((NUM_FEATURES, schema_hash()), |l| (l.len(), l.schema_hash()));
+    LAYOUT.set(layout).unwrap();
+    GENERIC.set(cli.generic_features).unwrap();
     if cli.threads > 0 {
         rayon::ThreadPoolBuilder::new()
             .num_threads(cli.threads)
@@ -1089,11 +1133,6 @@ fn main() {
             bytes.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
         eprintln!("keep-hashes: {} hashes", set.len());
         let _ = KEEP_HASHES.set(set);
-    }
-    if let Some(path) = &cli.hash_out {
-        assert!(!cli.resume, "--hash-out cannot resume: the sidecar would lose alignment");
-        let f = File::create(path).unwrap();
-        let _ = HASH_OUT.set(Mutex::new(BufWriter::new(f)));
     }
     if let Some(path) = &cli.keep_keys {
         let bytes = std::fs::read(path).unwrap();
@@ -1133,7 +1172,20 @@ fn main() {
     }
     let progress_path = PathBuf::from(format!("{}.progress", cli.out.display()));
     let prior = if cli.resume { Progress::load(&progress_path) } else { None };
-    let rec = RECORD_SIZE;
+    if let Some(path) = &cli.hash_out {
+        // On resume the sidecar is cut back to the records kept, one hash each.
+        let f = match &prior {
+            Some(p) => {
+                let mut f = std::fs::OpenOptions::new().read(true).write(true).open(path).unwrap();
+                f.set_len(p.kept * 8).unwrap();
+                f.seek(SeekFrom::End(0)).unwrap();
+                f
+            }
+            None => File::create(path).unwrap(),
+        };
+        let _ = HASH_OUT.set(Mutex::new(BufWriter::new(f)));
+    }
+    let rec = record_size();
     let file = if let Some(p) = &prior {
         let mut f = std::fs::OpenOptions::new().read(true).write(true).open(&cli.out).unwrap();
         // Drop any partial record written after the last completed file.
